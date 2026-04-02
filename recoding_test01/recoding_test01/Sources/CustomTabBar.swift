@@ -1,6 +1,6 @@
 import SwiftUI
 
-// タブバー設定
+// MARK: - 1.タブバー設定
 struct CustomTabBar: View {
     @Binding var selectedTab: Int
     @Namespace private var animation // スライドアニメーション用
@@ -26,7 +26,7 @@ struct CustomTabBar: View {
     }
 }
 
-// タブボタン設定
+// MARK: - 2.タブボタン設定
 struct TabButton: View {
     let title: String
     let icon: String

@@ -1,38 +1,47 @@
 import SwiftUI
 
-// 各画面のレイアウト
+// MARK: - 0. Preview(Xcode)
+struct RecordingssView_Previews: PreviewProvider {
+    static var previews: some View {
+        RecordingsView()
+    }
+}
+
+// MARK: - 1. AudioRecorder(録音機能)
+// class AudioRecorder: ObservableObject {
+//     private var audioRecorder: AVAudioRecorder?
+//     private var timer: Timer?  
+//     @Published var isRecording = false
+//     @Published var elapsedTime: TimeInterval = 0.0
+//     private var startTime: Date?
+
+//     // 録音開始メソッド
+//     func startRecording() {
+//         let audioSession = AVAudioSession.sharedInstance()
+//         let fileManager = FileManager.default
+//         let documentPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+
+// MARK: - 2. RecordingsView(録音画面)
 struct RecordingsView: View {
-    // 録音中かどうかを管理する状態(AudioRecorderクラスの呼び出し)
     @StateObject private var audioRecorder = AudioRecorder()
 
     private func formatTime(_ time: TimeInterval) -> String {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
-        // 1未満の端数を取り出し、100を掛けて2桁の整数（ミリ秒）にする
         let milliseconds = Int((time.truncatingRemainder(dividingBy: 1)) * 100)
-        
         return String(format: "%02d:%02d.%02d", minutes, seconds, milliseconds)
     }
     
     var body: some View {
-        // 文字
-        ZStack {
+        NavigationView {
             VStack {
-                HStack{
-                    Text("Recordings")
-                        .font(.largeTitle)
-                        .bold()
-                        .padding(10)
-                    Spacer()
-                }
                 Spacer()
                     .frame(height: 50)
 
                 // --- 録音時間の表示 ---
                 Text(formatTime(audioRecorder.elapsedTime))
-                .font(.system(size: 40, weight: .thin, design: .monospaced)) // 等幅フォントで数字のブレを防ぐ
+                    .font(.system(size: 40, weight: .thin, design: .monospaced))
             
-                
                 // --- 波形イメージ ---
                 HStack(spacing: 4) {
                     ForEach(0..<15) { _ in
@@ -48,7 +57,6 @@ struct RecordingsView: View {
                 
                 // --- 録音ボタン---
                 Button(action: {
-                    // 録音状態に応じて、開始と停止を切り替える
                     if audioRecorder.isRecording {
                         audioRecorder.stopRecording()
                     } else {
@@ -73,7 +81,8 @@ struct RecordingsView: View {
                 }
                 .padding(.bottom, 150)
             }
-            .padding()
+            // タイトルバーの設定
+            .navigationTitle("Recordings")
         }
     }
 }

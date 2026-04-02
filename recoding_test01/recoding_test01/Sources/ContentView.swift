@@ -12,15 +12,13 @@ struct ContentView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            Color.black
-                .ignoresSafeArea()
 
             Group {
                 switch selectedTab {
                 case 0:
                     RecordingsView()
                 case 1:
-                    CollectionView()
+                    CollectionsView()
                 case 2:
                     SettingsView()
                 default:
@@ -29,11 +27,12 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .ignoresSafeArea(edges: .bottom)
+            .background(Color(.systemBackground))
 
             // カスタムタブバーエリア
             CustomTabBar(selectedTab: $selectedTab)
 
         }
-        .preferredColorScheme(.dark)
+
     }
 }
