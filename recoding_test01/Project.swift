@@ -13,6 +13,7 @@ let project = Project(
                     "UILaunchScreen": [
                         "UIColorName": "",
                         "UIImageName": "",
+                    "NSLocationWhenINUseUsageDescription": "このアプリは録音と位置情報の取得のためにマイクと位置情報へのアクセスを必要とします。"
                     ],
                 ]
             ),

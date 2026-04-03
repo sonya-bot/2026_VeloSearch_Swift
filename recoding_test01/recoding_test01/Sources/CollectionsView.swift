@@ -45,6 +45,7 @@ struct CollectionsView: View {
         do {
             let directoryContents = try fileManager.contentsOfDirectory(at: documentDirectory, includingPropertiesForKeys: nil)
             self.recordings = directoryContents.filter { $0.pathExtension == "wav"}
+            .sorted { $0.lastPathComponent > $1.lastPathComponent } // ファイル名で降順にソート
             print("取得したファイル数: \(recordings.count)")
         } catch {
             print("ファイルの取得に失敗しました: \(error.localizedDescription)")

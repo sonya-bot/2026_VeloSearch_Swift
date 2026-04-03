@@ -8,7 +8,7 @@ struct PlayerView_Previews: PreviewProvider {
   }
 }
 
-// MARK: - 1. AudioPlayer(再生/停止/削除)
+// MARK: - 1. AudioPlayer(動作の定義)
 class AudioPlayer: ObservableObject {
   var audioPlayer: AVAudioPlayer?
 
@@ -82,7 +82,7 @@ struct PlayerView: View {
     // ★ 追加: 通常モードで表示するための保存用変数
     @State private var fileNote: String = ""
     @State private var fileExperimenter: String = ""
-    @State private var fileWeather: String = "天気: "
+    @State private var fileWeather: String = ""
     @State private var fileTemperature: String = ""
     @State private var fileHumidity: String = ""
     @State private var fileScene: String = ""
@@ -101,13 +101,13 @@ struct PlayerView: View {
 
     init(audioURL: URL) {
         self.initialURL = audioURL
-        self._currentURL = State(initialValue: audioURL)
+        self.currentURL = audioURL
     }
 
     var body: some View {
-        VStack(spacing: 40) {
+        VStack(spacing: 50) {
             Text("\(formatTime(audioPlayer.currentTime)) / \(formatTime(audioPlayer.duration))")
-                .font(.system(size: 24, weight: .thin, design: .monospaced))
+                .font(.system(size: 30, weight: .thin))
 
             HStack(spacing: 50) {
                 Button(action: {
@@ -118,7 +118,7 @@ struct PlayerView: View {
                     }
                 }) {
                     Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 70))
+                        .font(.system(size: 50))
                         .foregroundColor(.white)
                 }
             }
@@ -149,7 +149,7 @@ struct PlayerView: View {
                     }
                 ) {
                     if isEditing {
-                        // ーーーー 編集画面のUI ーーーー
+                        // 編集画面のUI 
                         VStack(alignment: .leading, spacing: 12) { // 余白を少し広げて見やすく調整
                             
                             Group {
@@ -206,25 +206,26 @@ struct PlayerView: View {
                         .padding(.vertical, 4)
 
                     } else {
-                        // ーーーー 通常（閲覧）モードのUI ーーーー
-                        VStack(alignment: .leading, spacing: 8) {
-                            if !fileExperimenter.isEmpty {
-                                HStack { Text("Experimenter:").foregroundColor(.gray); Text(fileExperimenter) }
+                        VStack(alignment: .leading, spacing: 12) { // 余白を少し広げて見やすく調整
+                            
+                            Group {
+                                Text("File Name: \(currentURL.lastPathComponent)").font(.caption).foregroundColor(.gray) // ファイル名
+                                Text("Experimenter: \(fileExperimenter)").font(.caption).foregroundColor(.gray) // 実験者
                             }
-                            if !fileWeather.isEmpty || !fileTemperature.isEmpty || !fileHumidity.isEmpty {
-                                HStack {
-                                    Text("Environment:").foregroundColor(.gray)
-                                    Text("\(fileWeather) \(fileTemperature.isEmpty ? "" : "\(fileTemperature)°C") \(fileHumidity.isEmpty ? "" : "\(fileHumidity)%")")
+                            Group {
+                                Text("Environment").font(.caption).foregroundColor(.gray) // 実験環境
+                                Text("Weather: \(fileWeather)").font(.caption).foregroundColor(.gray) // 天気
+                                HStack(spacing: 20) {
+                                    Text("Temperature: \(fileTemperature.isEmpty ? "N/A" : "\(fileTemperature)°C")").font(.caption).foregroundColor(.gray)
+                                    Text("Humidity: \(fileHumidity.isEmpty ? "N/A" : "\(fileHumidity)%")").font(.caption).foregroundColor(.gray)
                                 }
                             }
-                            if !fileScene.isEmpty {
-                                HStack { Text("Scene:").foregroundColor(.gray); Text(fileScene) }
-                            }
-                            if !fileNote.isEmpty {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Note:").foregroundColor(.gray)
-                                    Text(fileNote)
-                                }
+                            
+                            Group {
+                                Text("Scene: \(fileScene)").font(.caption).foregroundColor(.gray)
+                                
+                                Text("Note").font(.caption).foregroundColor(.gray)
+                                Text(fileNote).font(.body).foregroundColor(.gray)
                             }
                         }
                         .font(.body)
@@ -236,14 +237,23 @@ struct PlayerView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
         }
         .padding()
         .navigationTitle(currentURL.lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: { showingDeleteAlert = true }) {
-                    Image(systemName: "trash").foregroundColor(.white)
+                HStack(spacing : 20) {
+                    // 共有ボタン
+                    ShareLink(item: currentURL) {
+                        Image(systemName: "square.and.arrow.up")
+                            .foregroundColor(.white)
+                    }
+                    // 削除ボタン
+                    Button(action: { showingDeleteAlert = true }) {
+                        Image(systemName: "trash").foregroundColor(.white)
+                    }
                 }
             }
         }

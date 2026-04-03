@@ -13,6 +13,10 @@ struct SettingsView: View {
         NavigationView {
             VStack {
                 Spacer()
+                Text("Hello World!!")
+                    .padding()
+                Text("あとでつくる")
+                Spacer()
             }
             .navigationTitle("Settings")
         }

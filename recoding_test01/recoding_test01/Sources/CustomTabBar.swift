@@ -20,8 +20,13 @@ struct CustomTabBar: View {
             }
         }
         .padding(6)
-        .background(Color(white: 0.12)) // バー自体の色
+        .background(.ultraThinMaterial) // バー自体の色
         .clipShape(Capsule())
+        .overlay(
+            Capsule()
+            .stroke(Color.white.opacity(0.3), lineWidth: 0.5) // バーの枠線
+        )
+        .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 4)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: selectedTab)
     }
 }
