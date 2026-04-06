@@ -17,6 +17,10 @@ struct SettingsView: View {
                     .padding()
                 Text("あとでつくる")
                 Spacer()
+                Image(systemName: "ant.fill")
+                    .imageScale(.large)
+                    .padding(.bottom, 100)
+                Spacer()
             }
             .navigationTitle("Settings")
         }

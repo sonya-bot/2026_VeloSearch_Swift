@@ -23,9 +23,14 @@ class AudioRecorder: ObservableObject {
     private var timer: Timer?
     private var levelTimer: Timer?
     private var startTime: Date?
+
+    // 速度記録用のcsvファイルを作成するための変数定義
+    private var speedcsvTimer: Timer?
+    private var speedcsvData: [String] = []
+    private var currentBaseFileName: String = "" // WAVとCSVのファイル名を統一するため
     
     // 録音開始メソッド
-    func startRecording() {
+    func startRecording(locationManager: LocationManager) {
         let audioSession = AVAudioSession.sharedInstance()
         let fileManager = FileManager.default
         let documentPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -35,8 +40,8 @@ class AudioRecorder: ObservableObject {
         formatter.dateFormat = "yyyyMMdd"
         let dateString = formatter.string(from: Date())
         let nextNumber = getNextSequenceNumber(dateString: dateString, in: documentPath)
-        let fileName = "\(dateString)_\(String(format: "%02d", nextNumber)).wav"
-        let audioFilename = documentPath.appendingPathComponent(fileName)
+        self.currentBaseFileName = "\(dateString)_\(String(format: "%02d", nextNumber))"
+        let audioFilename = documentPath.appendingPathComponent("\(self.currentBaseFileName).wav")
 
         do {
             try audioSession.setCategory(.playAndRecord, mode: .default)
@@ -55,10 +60,11 @@ class AudioRecorder: ObservableObject {
             audioRecorder?.record()
             
             isRecording = true
-            print("録音開始: 保存先は \(fileName) です")
+            print("録音開始: 保存先は \(self.currentBaseFileName)です")
             elapsedTime = 0.0
             startTime = Date()
             currentDecibel = 0.0 // デシベル値をリセット
+            speedcsvData = ["elapsed_time,speed_kmh,volume_db"] // 速度記録CSVのヘッダー行を追加
 
             // 時間計測タイマー (0.01秒ごとに更新)
             timer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] _ in
@@ -68,6 +74,19 @@ class AudioRecorder: ObservableObject {
             
             // 波形アニメーション用の監視を開始
             startMonitoring()
+
+            // ★ 追加: CSV記録用タイマー (0.1秒 = 10Hzで記録)
+            speedcsvTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+                guard let self = self else { return }
+                // 記録するデータを取得・計算
+                let time = self.elapsedTime
+                let speedKmh = locationManager.speed * 3.6
+                let volume = self.currentDecibel
+                
+                // カンマ区切りの文字列を作成して配列に追加
+                let logLine = String(format: "%.2f,%.1f,%.1f", time, speedKmh, volume)
+                self.speedcsvData.append(logLine)
+            }
             
         } catch {
             print("録音の開始に失敗しました: \(error.localizedDescription)")
@@ -79,7 +98,7 @@ class AudioRecorder: ObservableObject {
         let fileManager = FileManager.default
         do {
             let files = try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-            let dailyFiles = files.filter { $0.lastPathComponent.hasPrefix(dateString) }
+            let dailyFiles = files.filter { $0.lastPathComponent.hasPrefix(dateString) && $0.pathExtension == "wav" }
             return dailyFiles.count + 1
         } catch {
             return 1
@@ -98,6 +117,10 @@ class AudioRecorder: ObservableObject {
         levelTimer = nil
         startTime = nil
         currentDecibel = 0.0 // デシベル値をリセット
+        speedcsvTimer?.invalidate()
+        speedcsvTimer = nil
+        
+        savespeedCSV() // 録音停止時にCSVファイルを保存
         
         // 波形を平らにリセット
         soundLevel = Array(repeating: 0.1, count: 20)
@@ -113,7 +136,7 @@ class AudioRecorder: ObservableObject {
             recorder.updateMeters()
             let power = recorder.averagePower(forChannel: 0)
             let level = self.normalizeSoundLevel(level: power)
-            
+            self.currentDecibel = power // 現在のデシベル値を更新
             // 配列を左にスライドさせて新しいデータを右に追加
             self.soundLevel.removeFirst()
             self.soundLevel.append(level)
@@ -124,6 +147,23 @@ class AudioRecorder: ObservableObject {
         let baseLevel = max(0.0, CGFloat(level) + 50)
         let normalized = min(baseLevel / 50, 1.0)
         return max(0.1, normalized)
+    }
+
+    // CSVファイルを保存するメソッド
+    private func savespeedCSV() {
+        let fileManager = FileManager.default
+        let documentPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let csvFilename = documentPath.appendingPathComponent("\(currentBaseFileName).csv")
+        
+        // 配列のデータを改行コード(\n)で連結して1つの文字列にする
+        let csvString = speedcsvData.joined(separator: "\n")
+        
+        do {
+            try csvString.write(to: csvFilename, atomically: true, encoding: .utf8)
+            print("CSV保存完了: \(currentBaseFileName).csv")
+        } catch {
+            print("CSVの保存に失敗しました: \(error.localizedDescription)")
+        }
     }
 }
 
@@ -171,8 +211,9 @@ struct RecordingsView: View {
                             .animation(.linear(duration: 0.05), value: audioRecorder.soundLevel[index])
                     }
                 }
+                .frame(height: 100)
                 
-                Spacer().frame(height: 100)
+                Spacer().frame(height: 50)
                 
                 // 音量表示
                 List {
@@ -197,11 +238,10 @@ struct RecordingsView: View {
                                 .monospacedDigit()
                         }
                     }
-                
-                .listStyle(InsetGroupedListStyle()) 
-                .frame(height: 10) 
-                .scrollDisabled(true) 
                 }
+                .listStyle(InsetGroupedListStyle()) 
+                .frame(height: 180) 
+                .scrollDisabled(true) 
                 .scrollContentBackground(.hidden)
 
                 
@@ -212,7 +252,7 @@ struct RecordingsView: View {
                     if audioRecorder.isRecording {
                         audioRecorder.stopRecording()
                     } else {
-                        audioRecorder.startRecording()
+                        audioRecorder.startRecording(locationManager: locationManager)
                     }
                 }) {
                     ZStack {
