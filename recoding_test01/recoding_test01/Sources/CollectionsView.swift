@@ -48,7 +48,7 @@ class CollectionsViewModel: ObservableObject {
     }
   }
 
-  func favoliteAudio(audio: URL) {
+  func favoriteAudio(audio: URL) {
     let fileName = audio.lastPathComponent
     if favoriteAudios.contains(fileName) {
       // すでにお気に入りにある場合は削除
@@ -97,10 +97,20 @@ struct CollectionsView: View {
             ForEach(filteredItems, id: \.self) { item in
               // NavigationStack のための最新の遷移方法
               NavigationLink(value: item) {
-                Label(
-                  item.lastPathComponent,
-                  systemImage: item.lastPathComponent.contains("Recording") ? "mic" : "waveform"
-                )
+                Label {
+                    HStack {                        
+                        // お気に入りの場合は星マークを表示
+                        if viewModel.favoriteAudios.contains(item.lastPathComponent) {
+                            Image(systemName: "star.fill")
+                                .foregroundStyle(.green)
+                        }
+                        Text(item.lastPathComponent)
+                            .lineLimit(1)
+                    }
+                } icon: {
+                    Image(systemName: item.lastPathComponent.contains("Recording") ? "mic" : "waveform")
+                }
+
               }
               .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button(role: .destructive) {
@@ -114,7 +124,7 @@ struct CollectionsView: View {
                 let isFavorite = viewModel.favoriteAudios.contains(item.lastPathComponent)
                 Button {
                   // お気に入り処理を ViewModel に依頼
-                  viewModel.favoliteAudio(audio: item)
+                  viewModel.favoriteAudio(audio: item)
                 } label: {
                   Image(systemName: isFavorite ? "star.fill" : "star")
                 }
@@ -135,9 +145,9 @@ struct CollectionsView: View {
         ToolbarItem(placement: .topBarTrailing) {
           Menu {
             Button(
-              "日付順",
+              "in date order",
               action: { viewModel.items.sort { $0.lastPathComponent > $1.lastPathComponent } })
-            Button("種類順", action: { /* 今後の実装 */  })
+            Button("in name order", action: { /* 今後の実装 */  })
           } label: {
             Image(systemName: "arrow.up.arrow.down.circle")
           }

@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import SwiftUI
 import CoreLocation
+import Observation
 
 // MARK: - 0. Preview(Xcode)
 struct RecordingsView_Previews: PreviewProvider {
@@ -10,37 +11,35 @@ struct RecordingsView_Previews: PreviewProvider {
     }
 }
 
-// MARK: - 1. AudioRecorder(録音ロジック)
-class AudioRecorder: ObservableObject {
+
+// MARK: - 1. AudioRecorder (録音ロジック)
+@Observable // ★ ObservableObject から @Observable に進化
+class AudioRecorder {
     var audioRecorder: AVAudioRecorder?
     
-    // @Published をつけると、この値が変わった時にUIが自動で更新される
-    @Published var isRecording = false
-    @Published var elapsedTime: TimeInterval = 0.0
-    @Published var soundLevel: [CGFloat] = Array(repeating: 0.1, count: 20) // 音量レベルの配列（例: 20段階）
-    @Published var currentDecibel: Float = 0.0 // 現在のデシベル値（初期値は最小値）
+    var isRecording = false
+    var elapsedTime: TimeInterval = 0.0
+    var soundLevel: [CGFloat] = Array(repeating: 0.1, count: 20)
+    var currentDecibel: Float = 0.0
 
     private var timer: Timer?
     private var levelTimer: Timer?
     private var startTime: Date?
 
-    // 速度記録用のcsvファイルを作成するための変数定義
     private var speedcsvTimer: Timer?
     private var speedcsvData: [String] = []
-    private var currentBaseFileName: String = "" // WAVとCSVのファイル名を統一するため
-    
-    // 録音開始メソッド
+    private var currentBaseFileName: String = ""
+
     func startRecording(locationManager: LocationManager) {
         let audioSession = AVAudioSession.sharedInstance()
         let fileManager = FileManager.default
         let documentPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
 
-        // ファイル命名規則の決定
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd"
         let dateString = formatter.string(from: Date())
         let nextNumber = getNextSequenceNumber(dateString: dateString, in: documentPath)
-        self.currentBaseFileName = "Recording_\(dateString)_\(String(format: "%02d", nextNumber))"
+        self.currentBaseFileName = "Recording_\(dateString)_\(String(format: "%02d", nextNumber))" // 録音ファイルの接頭辞は "Recording_"
         let audioFilename = documentPath.appendingPathComponent("\(self.currentBaseFileName).wav")
 
         do {
@@ -55,7 +54,6 @@ class AudioRecorder: ObservableObject {
             ]
 
             audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
-            // マイク音量の取得を有効化
             audioRecorder?.isMeteringEnabled = true
             audioRecorder?.record()
             
@@ -63,27 +61,21 @@ class AudioRecorder: ObservableObject {
             print("録音開始: 保存先は \(self.currentBaseFileName)です")
             elapsedTime = 0.0
             startTime = Date()
-            currentDecibel = 0.0 // デシベル値をリセット
-            speedcsvData = ["elapsed_time,speed_kmh,volume_db"] // 速度記録CSVのヘッダー行を追加
+            currentDecibel = 0.0
+            speedcsvData = ["elapsed_time,speed_kmh,volume_db"]
 
-            // 時間計測タイマー (0.01秒ごとに更新)
             timer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] _ in
                 guard let self = self, let startTime = self.startTime else { return }
                 self.elapsedTime = Date().timeIntervalSince(startTime)
             }
             
-            // 波形アニメーション用の監視を開始
             startMonitoring()
 
-            // ★ 追加: CSV記録用タイマー (0.1秒 = 10Hzで記録)
             speedcsvTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                 guard let self = self else { return }
-                // 記録するデータを取得・計算
                 let time = self.elapsedTime
                 let speedKmh = locationManager.speed * 3.6
                 let volume = self.currentDecibel
-                
-                // カンマ区切りの文字列を作成して配列に追加
                 let logLine = String(format: "%.2f,%.1f,%.1f", time, speedKmh, volume)
                 self.speedcsvData.append(logLine)
             }
@@ -93,7 +85,6 @@ class AudioRecorder: ObservableObject {
         }
     }
 
-    // 連番を取得するためのヘルパーメソッド
     private func getNextSequenceNumber(dateString: String, in directory: URL) -> Int {
         let fileManager = FileManager.default
         do {
@@ -105,29 +96,24 @@ class AudioRecorder: ObservableObject {
         }
     }
 
-    // 録音停止メソッド
     func stopRecording() {
         audioRecorder?.stop()
         isRecording = false
         
-        // タイマーをすべて停止
         timer?.invalidate()
         timer = nil
         levelTimer?.invalidate()
         levelTimer = nil
         startTime = nil
-        currentDecibel = 0.0 // デシベル値をリセット
+        elapsedTime = 0.0
+        currentDecibel = 0.0
         speedcsvTimer?.invalidate()
         speedcsvTimer = nil
         
-        savespeedCSV() // 録音停止時にCSVファイルを保存
-        
-        // 波形を平らにリセット
+        savespeedCSV()
         soundLevel = Array(repeating: 0.1, count: 20)
         print("録音停止")
     }
-    
-    // 波形アニメーション用メソッド
     
     private func startMonitoring() {
         levelTimer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] _ in
@@ -136,8 +122,7 @@ class AudioRecorder: ObservableObject {
             recorder.updateMeters()
             let power = recorder.averagePower(forChannel: 0)
             let level = self.normalizeSoundLevel(level: power)
-            self.currentDecibel = power // 現在のデシベル値を更新
-            // 配列を左にスライドさせて新しいデータを右に追加
+            self.currentDecibel = power
             self.soundLevel.removeFirst()
             self.soundLevel.append(level)
         }
@@ -149,13 +134,10 @@ class AudioRecorder: ObservableObject {
         return max(0.1, normalized)
     }
 
-    // CSVファイルを保存するメソッド
     private func savespeedCSV() {
         let fileManager = FileManager.default
         let documentPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let csvFilename = documentPath.appendingPathComponent("\(currentBaseFileName).csv")
-        
-        // 配列のデータを改行コード(\n)で連結して1つの文字列にする
         let csvString = speedcsvData.joined(separator: "\n")
         
         do {
@@ -167,42 +149,45 @@ class AudioRecorder: ObservableObject {
     }
 }
 
-// MARK: - 2. 移動速度の取得
-class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+// MARK: - 2. LocationManager
+@Observable
+class LocationManager: NSObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
-    @Published var speed: CLLocationSpeed = 0.0
+    var speed: CLLocationSpeed = 0.0
     
     override init() {
         super.init()
         manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation // 高精度を要求
-        // 位置情報の使用許可をリクエスト
+        manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         manager.requestWhenInUseAuthorization()
         manager.startUpdatingLocation()
     }
     
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
-        // 速度が取得できない場合（-1.0）は0にする
         self.speed = max(location.speed, 0.0)
     }
 }
 
-// MARK: - 3. AudioRecorderview(画面UI)
+// MARK: - 3. RecordingsView (画面UI)
 struct RecordingsView: View {
-    // クラスの呼び出し
-    @StateObject private var audioRecorder = AudioRecorder() // 録音ロジックを管理するAudioRecorderクラスのインスタンス
-    @StateObject private var locationManager = LocationManager() // 速度取得用のLocationManager
+
+    @State private var audioRecorder = AudioRecorder()
+    @State private var locationManager = LocationManager()
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack{
                 Spacer().frame(height: 60)
-                // 録音時間の表示（0.01秒まで表示）
+                
                 Text(formatElapsedTime(audioRecorder.elapsedTime))
                     .font(.system(size: 48, weight: .thin))
+                    // 固定幅フォント
+                    .monospacedDigit()
+                
                 Spacer()
-                // リアルタイム波形アニメーション
+                
+                // 波形アニメーション
                 HStack(spacing: 4) {
                     ForEach(0..<audioRecorder.soundLevel.count, id: \.self) { index in
                         Capsule()
@@ -215,7 +200,6 @@ struct RecordingsView: View {
                 
                 Spacer().frame(height: 50)
                 
-                // 音量表示
                 List {
                     Section(header: Text("Details")) {
                         HStack {
@@ -232,22 +216,19 @@ struct RecordingsView: View {
                             Text("Speed:")
                                 .font(.title)
                                 .foregroundColor(.gray)
-                            Spacer() // ★値を右端に綺麗に揃えるバネ
+                            Spacer()
                             Text("\(String(format: "%.1f", locationManager.speed * 3.6)) km/h")
                                 .font(.title2)
                                 .monospacedDigit()
                         }
                     }
                 }
-                .listStyle(InsetGroupedListStyle()) 
+                .listStyle(.insetGrouped)
                 .frame(height: 180) 
                 .scrollDisabled(true) 
                 .scrollContentBackground(.hidden)
-
                 
-                Spacer()
                 
-                // 録音・停止ボタン
                 Button(action: {
                     if audioRecorder.isRecording {
                         audioRecorder.stopRecording()
@@ -271,18 +252,16 @@ struct RecordingsView: View {
                         }
                     }
                 }
-                .padding(.bottom, 100) // 画面の底から少し浮かせる
+                .padding(.bottom, 80)
             }
             .navigationTitle("Recordings")
         }
     }
     
-    // 時間を "00:00.00" の形式にフォーマットするヘルパー関数
     private func formatElapsedTime(_ time: TimeInterval) -> String {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
         let milliseconds = Int((time.truncatingRemainder(dividingBy: 1)) * 100)
         return String(format: "%02d:%02d.%02d", minutes, seconds, milliseconds)
     }
-
 }
