@@ -40,7 +40,7 @@ class AudioRecorder: ObservableObject {
         formatter.dateFormat = "yyyyMMdd"
         let dateString = formatter.string(from: Date())
         let nextNumber = getNextSequenceNumber(dateString: dateString, in: documentPath)
-        self.currentBaseFileName = "\(dateString)_\(String(format: "%02d", nextNumber))"
+        self.currentBaseFileName = "Recording_\(dateString)_\(String(format: "%02d", nextNumber))"
         let audioFilename = documentPath.appendingPathComponent("\(self.currentBaseFileName).wav")
 
         do {
