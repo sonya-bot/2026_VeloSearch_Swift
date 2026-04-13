@@ -177,6 +177,7 @@ enum DetectionState {
 struct DetectingsView: View {
   @State private var detection = Detection()
   @State private var locationManager = LocationManager()
+  @AppStorage("warningSoundID") private var selectedSoundID: Int = 1052
 
   var body: some View {
     NavigationStack {
@@ -262,7 +263,7 @@ struct DetectingsView: View {
         .padding(.bottom, 20)
         .sensoryFeedback(.impact(flexibility: .solid), trigger: detection.isRecording)
         .onChange(of: detection.state) { oldValue, newValue in
-            let soundID: SystemSoundID = 1052 // 「ピッ」という汎用的なシステム音
+            let soundID: SystemSoundID = SystemSoundID(selectedSoundID) //設定から読み込んだ音を使用
             
             switch newValue {
             case .detect:

@@ -162,9 +162,11 @@ struct PlayerView: View {
         Text("Speed:")
           .font(.title2)
           .foregroundColor(.gray)
+          .frame(width: 80, alignment: .trailing)
         Text("\(currentSpeed) km/h")
           .font(.title)
           .monospacedDigit()
+          .frame(width: 150, alignment: .leading)
       }
 
       List {
