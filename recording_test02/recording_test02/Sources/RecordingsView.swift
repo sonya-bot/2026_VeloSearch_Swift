@@ -1,38 +1,32 @@
 import AVFoundation
-import CoreLocation
 import Foundation
 import Observation
 import SwiftUI
 
-// MARK: - 0. Preview(Xcode)
-struct RecordingsView_Previews: PreviewProvider {
-  static var previews: some View {
-    RecordingsView()
-  }
-}
-
 // MARK: - 1. AudioRecorder (録音ロジック)
-@Observable  // ★ ObservableObject から @Observable に進化
+@Observable
 class AudioRecorder {
   var audioRecorder: AVAudioRecorder?
 
   var isRecording = false
   var elapsedTime: TimeInterval = 0.0
-  var soundLevel: [CGFloat] = Array(repeating: 0.1, count: 20)
-  var currentDecibel: Float = 0.0
+  
+  // L/Rそれぞれの音量データ
+  var leftDecibel: Float = -160.0
+  var rightDecibel: Float = -160.0
+  var leftLevel: CGFloat = 0.01
+  var rightLevel: CGFloat = 0.01
 
   private var timer: Timer?
   private var levelTimer: Timer?
   private var startTime: Date?
-
-  private var speedcsvTimer: Timer?
-  private var speedcsvData: [String] = []
   private var currentBaseFileName: String = ""
 
-  func startRecording(locationManager: LocationManager) {
+  func startRecording() {
     let audioSession = AVAudioSession.sharedInstance()
     let fileManager = FileManager.default
     let documentPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+
 
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyyMMdd"
@@ -42,27 +36,49 @@ class AudioRecorder {
     let audioFilename = documentPath.appendingPathComponent("\(self.currentBaseFileName).wav")
 
     do {
+      // オーディオセッションの設定
       try audioSession.setCategory(.playAndRecord, mode: .default)
+      
+      // // ★向きをLandscapeRight（Lightningが右）に固定し、L/Rの割り当てを安定させる
+      // try audioSession.setPreferredInputOrientation(.landscapeRight)
+      
+      // ★背面マイク（Back）を優先的に使用する設定
+      if let availableInputs = audioSession.availableInputs {
+        for input in availableInputs {
+          if let dataSources = input.dataSources {
+            for source in dataSources {
+              if source.dataSourceName == "Back" {
+                try audioSession.setInputDataSource(source)
+                print("マイク設定: を選択")
+              }
+            }
+          }
+        }
+      }
       try audioSession.setActive(true)
 
-      let settings = [
+      // 録音フォーマット設定（ステレオ 44.1kHz 16bit PCM）
+      let settings: [String: Any] = [
         AVFormatIDKey: Int(kAudioFormatLinearPCM),
-        AVSampleRateKey: 44100,
+        AVSampleRateKey: 44100.0,
         AVNumberOfChannelsKey: 2,
-        AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+        AVLinearPCMBitDepthKey: 16,
+        AVLinearPCMIsBigEndianKey: false,
+        AVLinearPCMIsFloatKey: false,
+        AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
       ]
 
+      // 録音開始
+      print("録音開始: \(audioFilename.lastPathComponent)")      
       audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
       audioRecorder?.isMeteringEnabled = true
       audioRecorder?.record()
 
       isRecording = true
-      print("録音開始: 保存先は \(self.currentBaseFileName)です")
       elapsedTime = 0.0
       startTime = Date()
-      currentDecibel = 0.0
-      speedcsvData = ["elapsed_time,speed_kmh,volume_db"]
 
+      // 時間計測タイマー
       timer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] _ in
         guard let self = self, let startTime = self.startTime else { return }
         self.elapsedTime = Date().timeIntervalSince(startTime)
@@ -70,199 +86,203 @@ class AudioRecorder {
 
       startMonitoring()
 
-      speedcsvTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-        guard let self = self else { return }
-        let time = self.elapsedTime
-        let speedKmh = locationManager.speed * 3.6
-        let volume = self.currentDecibel
-        let logLine = String(format: "%.2f,%.1f,%.1f", time, speedKmh, volume)
-        self.speedcsvData.append(logLine)
-      }
-
     } catch {
-      print("録音の開始に失敗しました: \(error.localizedDescription)")
+      print("エラー: \(error.localizedDescription)")
     }
   }
 
   private func getNextSequenceNumber(dateString: String, in directory: URL) -> Int {
-    let fileManager = FileManager.default
-    do {
-      let files = try fileManager.contentsOfDirectory(
-        at: directory, includingPropertiesForKeys: nil)
-      let dailyFiles = files.filter {
-        $0.lastPathComponent.hasPrefix("Recording_\(dateString)") && $0.pathExtension == "wav"
-      }
-      return dailyFiles.count + 1
-    } catch {
-      return 1
+  let fileManager = FileManager.default
+  do {
+    let files = try fileManager.contentsOfDirectory(
+      at: directory, includingPropertiesForKeys: nil)
+    let dailyFiles = files.filter {
+      $0.lastPathComponent.hasPrefix("Recording_\(dateString)") && $0.pathExtension == "wav"
     }
+    return dailyFiles.count + 1
+  } catch {
+    return 1
+  }
   }
 
   func stopRecording() {
     audioRecorder?.stop()
     isRecording = false
-
     timer?.invalidate()
-    timer = nil
     levelTimer?.invalidate()
-    levelTimer = nil
-    startTime = nil
     elapsedTime = 0.0
-    currentDecibel = 0.0
-    speedcsvTimer?.invalidate()
-    speedcsvTimer = nil
-
-    savespeedCSV()
-    soundLevel = Array(repeating: 0.1, count: 20)
-    print("録音停止")
+    leftLevel = 0.01
+    rightLevel = 0.01
   }
 
   private func startMonitoring() {
-    levelTimer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] _ in
+    levelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
       guard let self = self, let recorder = self.audioRecorder else { return }
-
       recorder.updateMeters()
-      let power = recorder.averagePower(forChannel: 0)
-      let level = self.normalizeSoundLevel(level: power)
-      self.currentDecibel = power
-      self.soundLevel.removeFirst()
-      self.soundLevel.append(level)
+      
+      // L(0) と R(1) のパワーを取得
+      self.leftDecibel = recorder.averagePower(forChannel: 0)
+      self.rightDecibel = recorder.averagePower(forChannel: 1)
+      
+      // 表示用に 0.0~1.0 に正規化
+      self.leftLevel = self.normalizeSoundLevel(level: self.leftDecibel)
+      self.rightLevel = self.normalizeSoundLevel(level: self.rightDecibel)
     }
   }
 
   private func normalizeSoundLevel(level: Float) -> CGFloat {
-    let baseLevel = max(0.0, CGFloat(level) + 50)
-    let normalized = min(baseLevel / 50, 1.0)
-    return max(0.1, normalized)
-  }
-
-  private func savespeedCSV() {
-    let fileManager = FileManager.default
-    let documentPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    let csvFilename = documentPath.appendingPathComponent("\(currentBaseFileName).csv")
-    let csvString = speedcsvData.joined(separator: "\n")
-
-    do {
-      try csvString.write(to: csvFilename, atomically: true, encoding: .utf8)
-      print("CSV保存完了: \(currentBaseFileName).csv")
-    } catch {
-      print("CSVの保存に失敗しました: \(error.localizedDescription)")
-    }
+    let minDb: Float = -60.0
+    if level < minDb { return 0.01 }
+    if level >= 0.0 { return 1.0 }
+    return CGFloat((level - minDb) / abs(minDb))
   }
 }
 
-// MARK: - 2. LocationManager
-@Observable
-class LocationManager: NSObject, CLLocationManagerDelegate {
-  private let manager = CLLocationManager()
-  var speed: CLLocationSpeed = 0.0
-
-  override init() {
-    super.init()
-    manager.delegate = self
-    manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
-    manager.requestWhenInUseAuthorization()
-    manager.startUpdatingLocation()
-  }
-
-  func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-    guard let location = locations.last else { return }
-    self.speed = max(location.speed, 0.0)
-  }
-}
-
-// MARK: - 3. RecordingsView (画面UI)
+// MARK: - 2. RecordingsView (UI)
 struct RecordingsView: View {
-
   @State private var audioRecorder = AudioRecorder()
-  @State private var locationManager = LocationManager()
+  @Environment(\.verticalSizeClass) var verticalSizeClass
 
   var body: some View {
     NavigationStack {
-      VStack {
-        Spacer().frame(height: 60)
-
-        Text(formatElapsedTime(audioRecorder.elapsedTime))
-          .font(.system(size: 48, weight: .thin))
-          // 固定幅フォント
-          .monospacedDigit()
-
-        Spacer()
-
-        // 波形アニメーション
-        HStack(spacing: 4) {
-          ForEach(0..<audioRecorder.soundLevel.count, id: \.self) { index in
-            Capsule()
-              .fill(audioRecorder.isRecording ? Color.red : Color.gray.opacity(0.3))
-              .frame(width: 6, height: audioRecorder.soundLevel[index] * 100)
-              .animation(.linear(duration: 0.05), value: audioRecorder.soundLevel[index])
-          }
-        }
-        .frame(height: 100)
-
-        Spacer().frame(height: 50)
-
-        List {
-          Section(header: Text("Details")) {
-            HStack {
-              Text("Volume:")
-                .font(.title)
-                .foregroundColor(.gray)
-              Spacer()
-              Text("\(String(format: "%.1f", audioRecorder.currentDecibel)) dB")
-                .font(.title2)
-                .monospacedDigit()
+      ZStack {
+        // 背景色
+        Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+        
+        if verticalSizeClass == .compact {
+          // 【横画面レイアウト】
+          HStack(spacing: 30) {
+            VStack(spacing: 15) {
+              timeDisplay
+              micAssignmentLabels
             }
+            .frame(maxWidth: .infinity)
 
-            HStack {
-              Text("Speed:")
-                .font(.title)
-                .foregroundColor(.gray)
-              Spacer()
-              Text("\(String(format: "%.1f", locationManager.speed * 3.6)) km/h")
-                .font(.title2)
-                .monospacedDigit()
-            }
+            stereoMeters
+              .frame(maxWidth: .infinity)
+
+            recordButton
+              .padding(.trailing, 20)
           }
+          .padding()
+        } else {
+          // 【縦画面レイアウト】
+          VStack(spacing: 40) {
+            Spacer().frame(height: 40)
+            timeDisplay
+            micAssignmentLabels
+            Spacer()
+            stereoMeters
+            Spacer()
+            recordButton
+              .padding(.bottom, 60)
+          }
+          .padding()
         }
-        .listStyle(.insetGrouped)
-        .frame(height: 180)
-        .scrollDisabled(true)
-        .scrollContentBackground(.hidden)
-
-        Button(action: {
-          if audioRecorder.isRecording {
-            audioRecorder.stopRecording()
-          } else {
-            audioRecorder.startRecording(locationManager: locationManager)
-          }
-        }) {
-          ZStack {
-            Circle()
-              .strokeBorder(Color.white, lineWidth: 3)
-              .frame(width: 70, height: 70)
-
-            if audioRecorder.isRecording {
-              RoundedRectangle(cornerRadius: 4)
-                .fill(Color.red)
-                .frame(width: 30, height: 30)
-            } else {
-              Circle()
-                .fill(Color.red)
-                .frame(width: 60, height: 60)
-            }
-          }
-        }
-        .padding(.bottom, 80)
       }
-      .navigationTitle("Recordings")
+      .navigationTitle("DRTF Recorder")
+      .navigationBarTitleDisplayMode(.inline)
+    }
+  }
+
+  // 時間表示
+  private var timeDisplay: some View {
+    Text(formatElapsedTime(audioRecorder.elapsedTime))
+      .font(.system(size: 48, weight: .thin))
+  }
+
+  // ★マイクの割り当て表示
+  private var micAssignmentLabels: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        Circle().fill(Color.green).frame(width: 8, height: 8)
+        Text("L: 背面マイク (カメラ横)")
+      }
+      HStack {
+        Circle().fill(Color.blue).frame(width: 8, height: 8)
+        Text("R: 底面マイク (端子横)")
+      }
+    }
+    .font(.caption)
+    .foregroundColor(.secondary)
+    .padding(10)
+    .background(Color.white.opacity(0.5))
+    .cornerRadius(8)
+  }
+
+  // ステレオメーター部分
+  private var stereoMeters: some View {
+    HStack(spacing: 50) {
+      VStack {
+        VerticalMeter(level: audioRecorder.leftLevel, label: "L", color: .green)
+        Text("\(Int(audioRecorder.leftDecibel)) dB")
+          .font(.system(.caption, design: .monospaced))
+          .foregroundColor(audioRecorder.leftDecibel > -3 ? .red : .primary)
+      }
+      VStack {
+        VerticalMeter(level: audioRecorder.rightLevel, label: "R", color: .blue)
+        Text("\(Int(audioRecorder.rightDecibel)) dB")
+          .font(.system(.caption, design: .monospaced))
+          .foregroundColor(audioRecorder.rightDecibel > -3 ? .red : .primary)
+      }
+    }
+  }
+
+  // 録音ボタン
+  private var recordButton: some View {
+    Button(action: {
+      if audioRecorder.isRecording {
+        audioRecorder.stopRecording()
+      } else {
+        audioRecorder.startRecording()
+      }
+    }) {
+      ZStack {
+        Circle()
+          .strokeBorder(Color.primary.opacity(0.2), lineWidth: 4)
+          .frame(width: 80, height: 80)
+        if audioRecorder.isRecording {
+          RoundedRectangle(cornerRadius: 8)
+            .fill(Color.red)
+            .frame(width: 35, height: 35)
+        } else {
+          Circle()
+            .fill(Color.red)
+            .frame(width: 65, height: 65)
+        }
+      }
     }
   }
 
   private func formatElapsedTime(_ time: TimeInterval) -> String {
     let minutes = Int(time) / 60
     let seconds = Int(time) % 60
-    let milliseconds = Int((time.truncatingRemainder(dividingBy: 1)) * 100)
-    return String(format: "%02d:%02d.%02d", minutes, seconds, milliseconds)
+    let ms = Int((time.truncatingRemainder(dividingBy: 1)) * 100)
+    return String(format: "%02d:%02d.%02d", minutes, seconds, ms)
+  }
+}
+
+// 垂直メーターのコンポーネント
+struct VerticalMeter: View {
+  var level: CGFloat
+  var label: String
+  var color: Color
+  
+  var body: some View {
+    VStack(spacing: 8) {
+      Text(label).font(.headline).foregroundColor(.secondary)
+      ZStack(alignment: .bottom) {
+        // 背景の溝
+        RoundedRectangle(cornerRadius: 6)
+          .fill(Color.black.opacity(0.1))
+          .frame(width: 40, height: 200)
+        
+        // 音量レベル（グラデーション）
+        RoundedRectangle(cornerRadius: 6)
+          .fill(LinearGradient(gradient: Gradient(colors: [.red, .yellow, color]), startPoint: .top, endPoint: .bottom))
+          .frame(width: 40, height: 200 * level)
+          .animation(.spring(response: 0.15, dampingFraction: 0.8), value: level)
+      }
+    }
   }
 }
