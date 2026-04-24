@@ -40,8 +40,18 @@ struct SettingsView: View {
                 .background(Color.black)
                 .cornerRadius(8)
 
-              Text("Noise Filter")
-                .font(.system(size: 16))
+                // MARK: - その他の設定セクション（今後の拡張用デコイ）
+                Section {
+                    HStack {
+                        Text("Version")
+                            .font(.system(size: 16))
+                        Spacer()
+                        Text("1.1.0")
+                            .foregroundColor(.secondary)
+                    }
+                } header: {
+                    Text("About")
+                }
             }
           }
           .tint(.green)  // トグルのON時の色を指定
@@ -83,7 +93,7 @@ struct SettingsView: View {
             Text("Version")
               .font(.system(size: 16))
             Spacer()
-            Text("1.0.0")
+            Text("1.1.0")
               .foregroundColor(.secondary)
           }
         } header: {
