@@ -91,6 +91,7 @@ struct CSVRecord {
 // MARK: - 3. PlayerView (画面UI)
 struct PlayerView: View {
   let initialURL: URL
+
   @State private var currentURL: URL
 
   @State private var audioPlayer = AudioPlayer()  // ★ @StateObject -> @State
@@ -143,7 +144,7 @@ struct PlayerView: View {
         }) {
           Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
             .font(.system(size: 50))
-            .foregroundColor(.white)
+            .foregroundColor(.red)
         }
       }
 
@@ -157,17 +158,6 @@ struct PlayerView: View {
       )
       .accentColor(.red)
       .padding(.horizontal, 20)
-
-      HStack(spacing: 50) {
-        Text("Speed:")
-          .font(.title2)
-          .foregroundColor(.gray)
-          .frame(width: 80, alignment: .trailing)
-        Text("\(currentSpeed) km/h")
-          .font(.title)
-          .monospacedDigit()
-          .frame(width: 150, alignment: .leading)
-      }
 
       List {
         Section(
@@ -308,19 +298,19 @@ struct PlayerView: View {
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
       ToolbarItemGroup(placement: .topBarTrailing) {
-          // 1. 共有ボタン
-          ShareLink(item: currentURL) {
-              Image(systemName: "square.and.arrow.up")
-          }
-          
-          // 2. 削除ボタン
-          Button(action: { showingDeleteAlert = true }) {
-              Image(systemName: "trash")
-                  .foregroundColor(.white)
-          }
+        // 1. 共有ボタン
+        ShareLink(item: currentURL) {
+          Image(systemName: "square.and.arrow.up")
+        }
+
+        // 2. 削除ボタン
+        Button(action: { showingDeleteAlert = true }) {
+          Image(systemName: "trash")
+            .foregroundColor(.white)
+        }
       }
     }
-    
+
     .alert("Delete Recording?", isPresented: $showingDeleteAlert) {
       Button("Delete", role: .destructive) {
         audioPlayer.deleteAudio(audio: currentURL)

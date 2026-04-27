@@ -178,7 +178,7 @@ struct MicSourceSettingView: View {
             HStack(spacing: 15) {
               VStack(spacing: 6) {
                 Image(systemName: "mic.fill").font(.title2).foregroundColor(.blue)
-                Text("底面").font(.subheadline).bold()
+                Text("底面").font(.subheadline)
               }
               .frame(width: 70)
 

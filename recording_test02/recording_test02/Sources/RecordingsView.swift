@@ -45,7 +45,7 @@ class AudioRecorder {
       // オーディオセッションの設定
       try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
       try audioSession.setActive(true)
-      
+
       // ハードウェアに入力を2チャンネル（ステレオ）として要求する
       if audioSession.maximumInputNumberOfChannels >= 2 {
         try audioSession.setPreferredInputNumberOfChannels(2)
@@ -69,11 +69,12 @@ class AudioRecorder {
             $0.orientation == targetOrientation
           }) {
             if let supportedPatterns = selectedDataSource.supportedPolarPatterns,
-               supportedPatterns.contains(.stereo) {
-                try selectedDataSource.setPreferredPolarPattern(.stereo)
-                print("ステレオ入力を適用しました")
+              supportedPatterns.contains(.stereo)
+            {
+              try selectedDataSource.setPreferredPolarPattern(.stereo)
+              print("ステレオ入力を適用しました")
             } else {
-                print("このマイクはステレオ入力をサポートしていません")
+              print("このマイクはステレオ入力をサポートしていません")
             }
 
             try builtInMic.setPreferredDataSource(selectedDataSource)
@@ -194,11 +195,11 @@ struct RecordingsView: View {
               VStack(spacing: 10) {
                 micAssignmentLabels
                   .padding(.top, -20)
-                  .padding(.bottom, 20)
+                  // .padding(.bottom, 10)
                 horizontalStereoMeters
-                Spacer()
+                // Spacer()
               }
-              .padding(.bottom, 120)
+              .padding(.bottom, 160)
               .frame(width: (geometry.size.width - 30) * 2 / 3)
             }
             .frame(maxHeight: .infinity)
@@ -237,7 +238,7 @@ struct RecordingsView: View {
       Section(header: Text("Mic Assignment")) {
         HStack {
           // 1. 左側: マイク設定
-          VStack(spacing: 8) {
+          VStack(spacing: 6) {
             Text(selectedMicSource == "背面" ? "Back" : "Front")
             Divider()
               .overlay(Color.gray)
@@ -251,7 +252,7 @@ struct RecordingsView: View {
             .overlay(Color.gray)
 
           // 3. 右側: 端末の向き
-          VStack(spacing: 8) {
+          VStack(spacing: 6) {
             Image(systemName: selectedOrientation == "縦" ? "iphone" : "iphone.landscape")
               .font(.title2)
             Text(selectedOrientation == "縦" ? "Portrait" : "Landscape")
@@ -263,7 +264,7 @@ struct RecordingsView: View {
       }
     }
     .listStyle(.insetGrouped)
-    .frame(height: 130)
+    .frame(height: 125)
     .scrollDisabled(true)  //
     .scrollContentBackground(.hidden)
   }
