@@ -21,79 +21,115 @@ let soundOptions: [SoundOption] = [
   SoundOption(id: 1322, name: "警告 (1322)"),
 ]
 
+enum DeviceOrientationOption: String, CaseIterable, Identifiable {
+  case portrait = "縦"
+  case landscapeRight = "横"
+  var id: String { self.rawValue }
+}
+
+enum MicSourceOption: String, CaseIterable, Identifiable {
+  case back = "背面"
+  case front = "前面"
+  var id: String { self.rawValue }
+}
+
+// MARK: - アイコン用コンポーネント
+struct SettingsIconView: View {
+  let systemName: String
+  let color: Color
+
+  var body: some View {
+    Image(systemName: systemName)
+      .font(.system(size: 14, weight: .semibold))
+      .foregroundColor(.white)  // 背景色に対して常に白なので、テーマ問わず視認性が高い
+      .frame(width: 28, height: 28)
+      .background(color)
+      .cornerRadius(6)
+  }
+}
+
+// MARK: - 2. SettingsView UI (メイン画面)
 struct SettingsView: View {
-  // @AppStorageを使うと、状態がUserDefaultsに自動保存され、次回起動時にも維持されます
   @AppStorage("isNoiseFilterEnabled") private var isNoiseFilterEnabled = false
   @AppStorage("warningSoundID") private var selectedSoundID: Int = 1052
+  @AppStorage("deviceOrientation") private var selectedOrientation: DeviceOrientationOption =
+    .landscapeRight
+  @AppStorage("micSource") private var selectedMicSource: MicSourceOption = .back
 
   var body: some View {
     NavigationStack {
       Form {
-        // MARK: - 録音設定セクション
+        // MARK: - 一般設定セクション
         Section {
           Toggle(isOn: $isNoiseFilterEnabled) {
             HStack(spacing: 12) {
-              Image(systemName: "waveform.badge.minus")
-                .font(.system(size: 16, weight: .bold))
-                .foregroundColor(.green)
-                .frame(width: 32, height: 32)
-                .background(Color.black)
-                .cornerRadius(8)
-
-                // MARK: - その他の設定セクション（今後の拡張用デコイ）
-                Section {
-                    HStack {
-                        Text("Version")
-                            .font(.system(size: 16))
-                        Spacer()
-                        Text("1.1.0")
-                            .foregroundColor(.secondary)
-                    }
-                } header: {
-                    Text("About")
-                }
+              SettingsIconView(systemName: "waveform.badge.minus", color: .green)
+              Text("Noise Filter")
+                .font(.system(size: 16))
             }
           }
-          .tint(.green)  // トグルのON時の色を指定
-          .onChange(of: isNoiseFilterEnabled) {
-            print("Noise Filter: \(isNoiseFilterEnabled)")
-          }
+          .tint(.green)
+
           Picker(selection: $selectedSoundID) {
             ForEach(soundOptions, id: \.id) { option in
               Text(option.name).tag(option.id)
             }
           } label: {
             HStack(spacing: 12) {
-              Image(systemName: "bell.badge.fill")
-                .font(.system(size: 16, weight: .bold))
-                .foregroundColor(.red)
-                .frame(width: 32, height: 32)
-                .background(Color.black)
-                .cornerRadius(8)
-
-              Text("Arart Sound")
+              SettingsIconView(systemName: "bell.badge.fill", color: .red)
+              Text("Alert Sound")
                 .font(.system(size: 16))
             }
           }
-          // 純正アプリのように、タップすると別画面でリストが開くスタイル
           .pickerStyle(.navigationLink)
-          // 選択が変更された瞬間に音を鳴らしてプレビューする
           .onChange(of: selectedSoundID) { oldValue, newValue in
             AudioServicesPlaySystemSound(SystemSoundID(newValue))
           }
-
+        } header: {
+          Text("General Settings")
         } footer: {
-          Text("・録音時の環境ノイズを低減します\n(※現在デコイとしてUIのみ実装中)\n・車両接近検知時に鳴る警告音の種類を選択します")
+          Text("・録音時の環境ノイズを低減します(デコイ)\n・車両接近検知時の警告音を選択します")
             .font(.system(size: 12))
         }
 
-        // MARK: - その他の設定セクション（今後の拡張用デコイ）
+        // MARK: - 録音設定セクション
+        Section {
+          // 端末の向き設定
+          Picker(selection: $selectedOrientation) {
+            ForEach(DeviceOrientationOption.allCases) { option in
+              Text(option.rawValue).tag(option)
+            }
+          } label: {
+            HStack(spacing: 12) {
+              SettingsIconView(
+                systemName: selectedOrientation == .portrait
+                  ? "rectangle.portrait.rotate" : "rectangle.landscape.rotate", color: .blue
+              )
+              Text("端末の向き")
+            }
+          }
+
+          // ペアマイク設定（タップで別画面へ遷移）
+          NavigationLink(destination: MicSourceSettingView()) {
+            HStack(spacing: 12) {
+              SettingsIconView(systemName: "mic.fill", color: .orange)
+              Text("ペアマイク")
+              Spacer()
+              Text(selectedMicSource.rawValue)
+                .foregroundColor(.secondary)
+            }
+          }
+        } header: {
+          Text("Recording Settings")
+        }
+
+        // MARK: - Aboutセクション
         Section {
           HStack {
             Text("Version")
               .font(.system(size: 16))
             Spacer()
-            Text("1.1.0")
+            Text("2.1.0")
               .foregroundColor(.secondary)
           }
         } header: {
@@ -101,8 +137,79 @@ struct SettingsView: View {
         }
       }
       .navigationTitle("Settings")
-      // タブバーに被らないように下部に余白を追加（CustomTabBarの高さ分）
-      .padding(.bottom, 80)
     }
+  }
+}
+
+// MARK: - 3. ペアマイク専用設定画面 (サブビュー)
+struct MicSourceSettingView: View {
+  @AppStorage("micSource") private var selectedMicSource: MicSourceOption = .back
+  @AppStorage("deviceOrientation") private var selectedOrientation: DeviceOrientationOption =
+    .landscapeRight
+
+  var body: some View {
+    Form {
+      // 選択セクション
+      Section {
+        ForEach(MicSourceOption.allCases) { option in
+          Button(action: {
+            selectedMicSource = option
+          }) {
+            HStack {
+              Text(option.rawValue)
+                .foregroundColor(.primary)
+              Spacer()
+              if selectedMicSource == option {
+                Image(systemName: "checkmark")
+                  .foregroundColor(.blue)
+              }
+            }
+          }
+        }
+      } header: {
+        Text("ペアマイクの選択")
+      }
+
+      // プレビューセクション
+      Section {
+        VStack(alignment: .leading, spacing: 10) {
+          ZStack {
+            // マイク構成を中央に配置
+            HStack(spacing: 15) {
+              VStack(spacing: 6) {
+                Image(systemName: "mic.fill").font(.title2).foregroundColor(.blue)
+                Text("底面").font(.subheadline).bold()
+              }
+              .frame(width: 70)
+
+              Image(systemName: "plus").font(.body).foregroundColor(.secondary)
+
+              VStack(spacing: 6) {
+                Image(systemName: "mic.fill").font(.title2).foregroundColor(.green)
+                Text(selectedMicSource == .back ? "背面" : "前面").font(.subheadline).bold()
+              }
+              .frame(width: 70)
+            }
+
+            // iPhoneアイコンを右端に配置
+            // HStack {
+            //   Spacer()
+            //   Image(
+            //     systemName: selectedOrientation == .portrait
+            //       ? "iphone.portrait" : "iphone.landscape"
+            //   )
+            //   .font(.title3)
+            //   .foregroundColor(.secondary)
+            //   .padding(.trailing, 5)
+            // }
+          }
+          .padding(.vertical, 8)
+        }
+      } header: {
+        Text("Mic Preview")
+      }
+    }
+    .navigationTitle("ペアマイク")
+    .navigationBarTitleDisplayMode(.inline)
   }
 }
