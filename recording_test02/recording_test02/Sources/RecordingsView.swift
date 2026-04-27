@@ -3,6 +3,13 @@ import Foundation
 import Observation
 import SwiftUI
 
+// MARK: - 0. Preview(Xcode)
+struct RecordingsView_Previews: PreviewProvider {
+  static var previews: some View {
+    RecordingsView()
+  }
+}
+
 // MARK: - 1. AudioRecorder (録音ロジック)
 @Observable
 class AudioRecorder {
@@ -10,10 +17,10 @@ class AudioRecorder {
 
   var isRecording = false
   var elapsedTime: TimeInterval = 0.0
-  
+
   // L/Rそれぞれの音量データ
-  var leftDecibel: Float = -160.0
-  var rightDecibel: Float = -160.0
+  var leftDecibel: Float = 0.0
+  var rightDecibel: Float = 0.0
   var leftLevel: CGFloat = 0.01
   var rightLevel: CGFloat = 0.01
 
@@ -27,7 +34,6 @@ class AudioRecorder {
     let fileManager = FileManager.default
     let documentPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
 
-
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyyMMdd"
     let dateString = formatter.string(from: Date())
@@ -38,10 +44,10 @@ class AudioRecorder {
     do {
       // オーディオセッションの設定
       try audioSession.setCategory(.playAndRecord, mode: .default)
-      
+
       // // ★向きをLandscapeRight（Lightningが右）に固定し、L/Rの割り当てを安定させる
       // try audioSession.setPreferredInputOrientation(.landscapeRight)
-      
+
       // ★背面マイク（Back）を優先的に使用する設定
       if let availableInputs = audioSession.availableInputs {
         for input in availableInputs {
@@ -65,11 +71,11 @@ class AudioRecorder {
         AVLinearPCMBitDepthKey: 16,
         AVLinearPCMIsBigEndianKey: false,
         AVLinearPCMIsFloatKey: false,
-        AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+        AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
       ]
 
       // 録音開始
-      print("録音開始: \(audioFilename.lastPathComponent)")      
+      print("録音開始: \(audioFilename.lastPathComponent)")
       audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
       audioRecorder?.isMeteringEnabled = true
       audioRecorder?.record()
@@ -92,17 +98,17 @@ class AudioRecorder {
   }
 
   private func getNextSequenceNumber(dateString: String, in directory: URL) -> Int {
-  let fileManager = FileManager.default
-  do {
-    let files = try fileManager.contentsOfDirectory(
-      at: directory, includingPropertiesForKeys: nil)
-    let dailyFiles = files.filter {
-      $0.lastPathComponent.hasPrefix("Recording_\(dateString)") && $0.pathExtension == "wav"
+    let fileManager = FileManager.default
+    do {
+      let files = try fileManager.contentsOfDirectory(
+        at: directory, includingPropertiesForKeys: nil)
+      let dailyFiles = files.filter {
+        $0.lastPathComponent.hasPrefix("Recording_\(dateString)") && $0.pathExtension == "wav"
+      }
+      return dailyFiles.count + 1
+    } catch {
+      return 1
     }
-    return dailyFiles.count + 1
-  } catch {
-    return 1
-  }
   }
 
   func stopRecording() {
@@ -119,11 +125,11 @@ class AudioRecorder {
     levelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
       guard let self = self, let recorder = self.audioRecorder else { return }
       recorder.updateMeters()
-      
+
       // L(0) と R(1) のパワーを取得
       self.leftDecibel = recorder.averagePower(forChannel: 0)
       self.rightDecibel = recorder.averagePower(forChannel: 1)
-      
+
       // 表示用に 0.0~1.0 に正規化
       self.leftLevel = self.normalizeSoundLevel(level: self.leftDecibel)
       self.rightLevel = self.normalizeSoundLevel(level: self.rightDecibel)
@@ -148,82 +154,125 @@ struct RecordingsView: View {
       ZStack {
         // 背景色
         Color(UIColor.systemGroupedBackground).ignoresSafeArea()
-        
+
         if verticalSizeClass == .compact {
           // 【横画面レイアウト】
-          HStack(spacing: 30) {
-            VStack(spacing: 15) {
-              timeDisplay
-              micAssignmentLabels
+          GeometryReader { geometry in
+            HStack(spacing: 30) {
+              VStack(spacing: 10) {
+                timeDisplay
+                Spacer()
+                recordButton
+                  .padding(.bottom, 100)
+                Spacer()
+              }
+              .frame(width: (geometry.size.width - 30) / 3)
+
+              VStack(spacing: 10) {
+                micAssignmentLabels
+                  .padding(.top, -20)
+                  .padding(.bottom, 20)
+                horizontalStereoMeters
+                Spacer()
+              }
+              .padding(.bottom, 120)
+              .frame(width: (geometry.size.width - 30) * 2 / 3)
             }
-            .frame(maxWidth: .infinity)
-
-            stereoMeters
-              .frame(maxWidth: .infinity)
-
-            recordButton
-              .padding(.trailing, 20)
+            .frame(maxHeight: .infinity)
           }
           .padding()
         } else {
           // 【縦画面レイアウト】
-          VStack(spacing: 40) {
-            Spacer().frame(height: 40)
+          VStack(spacing: 20) {
+            Spacer().frame(height: 80)
             timeDisplay
             micAssignmentLabels
-            Spacer()
+            // Spacer()
             stereoMeters
-            Spacer()
+            // Spacer()
             recordButton
-              .padding(.bottom, 60)
+              .padding(.bottom, 100)
           }
-          .padding()
+          .padding(.bottom, 40)
         }
       }
-      .navigationTitle("DRTF Recorder")
-      .navigationBarTitleDisplayMode(.inline)
+      .navigationTitle("Recordings")
     }
   }
 
+  // MARK: - 4. Component
   // 時間表示
   private var timeDisplay: some View {
     Text(formatElapsedTime(audioRecorder.elapsedTime))
       .font(.system(size: 48, weight: .thin))
+      .monospacedDigit()
   }
 
-  // ★マイクの割り当て表示
+  // マイクの割り当て表示
   private var micAssignmentLabels: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        Circle().fill(Color.green).frame(width: 8, height: 8)
-        Text("L: 背面マイク (カメラ横)")
-      }
-      HStack {
-        Circle().fill(Color.blue).frame(width: 8, height: 8)
-        Text("R: 底面マイク (端子横)")
+    List {
+      Section(header: Text("Mic Assignment")) {
+        // ここには設定画面で指定したマイクを表示できるようにする、現在はデコイで実装
+        HStack {
+          Spacer()
+          Text("Back")
+          Spacer()
+
+          Divider()
+            .overlay(Color.gray)
+
+          Spacer()
+          Text("Bottom")
+          Spacer()
+        }
       }
     }
-    .font(.caption)
-    .foregroundColor(.secondary)
-    .padding(10)
-    .background(Color.white.opacity(0.5))
-    .cornerRadius(8)
+    .listStyle(.insetGrouped)
+    .frame(height: 90)
+    .scrollDisabled(true)  //
+    .scrollContentBackground(.hidden)
   }
 
   // ステレオメーター部分
   private var stereoMeters: some View {
     HStack(spacing: 50) {
       VStack {
-        VerticalMeter(level: audioRecorder.leftLevel, label: "L", color: .green)
+        VerticaldBMeter(
+          level: audioRecorder.leftLevel, label: "L", font: .system(.caption))
         Text("\(Int(audioRecorder.leftDecibel)) dB")
-          .font(.system(.caption, design: .monospaced))
-          .foregroundColor(audioRecorder.leftDecibel > -3 ? .red : .primary)
+          .font(.system(.title3))
+          .monospacedDigit()
+          .frame(width: 80)
       }
       VStack {
-        VerticalMeter(level: audioRecorder.rightLevel, label: "R", color: .blue)
+        VerticaldBMeter(
+          level: audioRecorder.rightLevel, label: "R", font: .system(.caption))
         Text("\(Int(audioRecorder.rightDecibel)) dB")
-          .font(.system(.caption, design: .monospaced))
-          .foregroundColor(audioRecorder.rightDecibel > -3 ? .red : .primary)
+          .font(.system(.title3))
+          .monospacedDigit()
+          .frame(width: 80)
+      }
+    }
+  }
+
+  // 横画面用のステレオメーター部分
+  private var horizontalStereoMeters: some View {
+    VStack(spacing: 20) {
+      HStack(spacing: 15) {
+        HorizontaldBMeter(
+          level: audioRecorder.leftLevel, label: "L", font: .system(.caption))
+        Text("\(Int(audioRecorder.leftDecibel)) dB")
+          .font(.system(.title3))
+          .monospacedDigit()
+          .frame(width: 80, alignment: .leading)
+      }
+      HStack(spacing: 15) {
+        HorizontaldBMeter(
+          level: audioRecorder.rightLevel, label: "R", font: .system(.caption))
+        Text("\(Int(audioRecorder.rightDecibel)) dB")
+          .font(.system(.title3))
+          .monospacedDigit()
+          .frame(width: 80, alignment: .leading)
       }
     }
   }
@@ -240,15 +289,15 @@ struct RecordingsView: View {
       ZStack {
         Circle()
           .strokeBorder(Color.primary.opacity(0.2), lineWidth: 4)
-          .frame(width: 80, height: 80)
+          .frame(width: 70, height: 70)
         if audioRecorder.isRecording {
           RoundedRectangle(cornerRadius: 8)
             .fill(Color.red)
-            .frame(width: 35, height: 35)
+            .frame(width: 30, height: 30)
         } else {
           Circle()
             .fill(Color.red)
-            .frame(width: 65, height: 65)
+            .frame(width: 60, height: 60)
         }
       }
     }
@@ -263,24 +312,57 @@ struct RecordingsView: View {
 }
 
 // 垂直メーターのコンポーネント
-struct VerticalMeter: View {
+struct VerticaldBMeter: View {
   var level: CGFloat
   var label: String
-  var color: Color
-  
+  var font: Font = .headline
+
   var body: some View {
     VStack(spacing: 8) {
-      Text(label).font(.headline).foregroundColor(.secondary)
+      Text(label).font(font).foregroundColor(.secondary)
       ZStack(alignment: .bottom) {
         // 背景の溝
         RoundedRectangle(cornerRadius: 6)
           .fill(Color.black.opacity(0.1))
-          .frame(width: 40, height: 200)
-        
+          .frame(width: 80, height: 200)
+
         // 音量レベル（グラデーション）
         RoundedRectangle(cornerRadius: 6)
-          .fill(LinearGradient(gradient: Gradient(colors: [.red, .yellow, color]), startPoint: .top, endPoint: .bottom))
-          .frame(width: 40, height: 200 * level)
+          .fill(
+            LinearGradient(
+              gradient: Gradient(colors: [.red, .white]), startPoint: .top,
+              endPoint: .bottom)
+          )
+          .frame(width: 80, height: 200 * level)
+          .animation(.spring(response: 0.15, dampingFraction: 0.8), value: level)
+      }
+    }
+  }
+}
+
+// 水平メーターのコンポーネント
+struct HorizontaldBMeter: View {
+  var level: CGFloat
+  var label: String
+  var font: Font = .headline
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Text(label).font(font).foregroundColor(.secondary)
+      ZStack(alignment: .leading) {
+        // 背景の溝
+        RoundedRectangle(cornerRadius: 6)
+          .fill(Color.black.opacity(0.1))
+          .frame(width: 300, height: 40)
+
+        // 音量レベル（グラデーション）
+        RoundedRectangle(cornerRadius: 6)
+          .fill(
+            LinearGradient(
+              gradient: Gradient(colors: [.white, .red]), startPoint: .leading,
+              endPoint: .trailing)
+          )
+          .frame(width: 300 * level, height: 40)
           .animation(.spring(response: 0.15, dampingFraction: 0.8), value: level)
       }
     }
