@@ -172,7 +172,7 @@ struct MicSourceSettingView: View {
 
       // プレビューセクション
       Section {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(spacing: 10) {
           ZStack {
             // マイク構成を中央に配置
             HStack(spacing: 15) {
@@ -186,23 +186,12 @@ struct MicSourceSettingView: View {
 
               VStack(spacing: 6) {
                 Image(systemName: "mic.fill").font(.title2).foregroundColor(.green)
-                Text(selectedMicSource == .back ? "背面" : "前面").font(.subheadline).bold()
+                Text(selectedMicSource == .back ? "背面" : "前面").font(.subheadline)
               }
               .frame(width: 70)
             }
-
-            // iPhoneアイコンを右端に配置
-            // HStack {
-            //   Spacer()
-            //   Image(
-            //     systemName: selectedOrientation == .portrait
-            //       ? "iphone.portrait" : "iphone.landscape"
-            //   )
-            //   .font(.title3)
-            //   .foregroundColor(.secondary)
-            //   .padding(.trailing, 5)
-            // }
           }
+          .frame(maxWidth: .infinity)
           .padding(.vertical, 8)
         }
       } header: {

@@ -29,7 +29,7 @@ class AudioRecorder {
   private var startTime: Date?
   private var currentBaseFileName: String = ""
 
-  func startRecording() {
+  func startRecording(orientation: String, micSource: String) {
     let audioSession = AVAudioSession.sharedInstance()
     let fileManager = FileManager.default
     let documentPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -43,25 +43,45 @@ class AudioRecorder {
 
     do {
       // オーディオセッションの設定
-      try audioSession.setCategory(.playAndRecord, mode: .default)
+      try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+      try audioSession.setActive(true)
+      
+      // ハードウェアに入力を2チャンネル（ステレオ）として要求する
+      if audioSession.maximumInputNumberOfChannels >= 2 {
+        try audioSession.setPreferredInputNumberOfChannels(2)
+      }
 
-      // // ★向きをLandscapeRight（Lightningが右）に固定し、L/Rの割り当てを安定させる
-      // try audioSession.setPreferredInputOrientation(.landscapeRight)
+      // 端末の向き設定を反映
+      if orientation == "縦" {
+        try audioSession.setPreferredInputOrientation(.portrait)
+      } else {
+        try audioSession.setPreferredInputOrientation(.landscapeRight)
+      }
 
-      // ★背面マイク（Back）を優先的に使用する設定
-      if let availableInputs = audioSession.availableInputs {
-        for input in availableInputs {
-          if let dataSources = input.dataSources {
-            for source in dataSources {
-              if source.dataSourceName == "Back" {
-                try audioSession.setInputDataSource(source)
-                print("マイク設定: を選択")
-              }
+      // 録音マイク（前面/背面）の設定を反映
+      if let availableInputs = audioSession.availableInputs,
+        let builtInMic = availableInputs.first(where: { $0.portType == .builtInMic })
+      {
+
+        if let dataSources = builtInMic.dataSources {
+          let targetOrientation: AVAudioSession.Orientation = (micSource == "背面") ? .back : .front
+          if let selectedDataSource = dataSources.first(where: {
+            $0.orientation == targetOrientation
+          }) {
+            if let supportedPatterns = selectedDataSource.supportedPolarPatterns,
+               supportedPatterns.contains(.stereo) {
+                try selectedDataSource.setPreferredPolarPattern(.stereo)
+                print("ステレオ入力を適用しました")
+            } else {
+                print("このマイクはステレオ入力をサポートしていません")
             }
+
+            try builtInMic.setPreferredDataSource(selectedDataSource)
+            try audioSession.setPreferredInput(builtInMic)
+            print("マイク設定: \(micSource) を選択")
           }
         }
       }
-      try audioSession.setActive(true)
 
       // 録音フォーマット設定（ステレオ 44.1kHz 16bit PCM）
       let settings: [String: Any] = [
@@ -149,6 +169,9 @@ struct RecordingsView: View {
   @State private var audioRecorder = AudioRecorder()
   @Environment(\.verticalSizeClass) var verticalSizeClass
 
+  @AppStorage("deviceOrientation") private var selectedOrientation: String = "横"
+  @AppStorage("micSource") private var selectedMicSource: String = "背面"
+
   var body: some View {
     NavigationStack {
       ZStack {
@@ -212,23 +235,35 @@ struct RecordingsView: View {
   private var micAssignmentLabels: some View {
     List {
       Section(header: Text("Mic Assignment")) {
-        // ここには設定画面で指定したマイクを表示できるようにする、現在はデコイで実装
         HStack {
-          Spacer()
-          Text("Back")
+          // 1. 左側: マイク設定
+          VStack(spacing: 8) {
+            Text(selectedMicSource == "背面" ? "Back" : "Front")
+            Divider()
+              .overlay(Color.gray)
+              .padding(.horizontal, 10)
+            Text("Bottom")
+          }
+          .frame(maxWidth: .infinity)
           Spacer()
 
           Divider()
             .overlay(Color.gray)
 
-          Spacer()
-          Text("Bottom")
-          Spacer()
+          // 3. 右側: 端末の向き
+          VStack(spacing: 8) {
+            Image(systemName: selectedOrientation == "縦" ? "iphone" : "iphone.landscape")
+              .font(.title2)
+            Text(selectedOrientation == "縦" ? "Portrait" : "Landscape")
+              .font(.caption)
+          }
+          .frame(maxWidth: .infinity)
         }
+        // .padding(.vertical, 4)
       }
     }
     .listStyle(.insetGrouped)
-    .frame(height: 90)
+    .frame(height: 130)
     .scrollDisabled(true)  //
     .scrollContentBackground(.hidden)
   }
@@ -283,7 +318,11 @@ struct RecordingsView: View {
       if audioRecorder.isRecording {
         audioRecorder.stopRecording()
       } else {
-        audioRecorder.startRecording()
+        // ★ @AppStorage で読み込んだ設定値を渡して録音を開始
+        audioRecorder.startRecording(
+          orientation: selectedOrientation,
+          micSource: selectedMicSource
+        )
       }
     }) {
       ZStack {
