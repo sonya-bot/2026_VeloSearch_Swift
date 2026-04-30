@@ -436,14 +436,14 @@ struct PlayerView: View {
   private var verticalstereoMeters: some View {
     HStack(spacing: 50) {
       VStack {
-        dBMeter(level: audioPlayer.leftLevel, label: "L", font: .system(.caption))
+        VerticaldBMeter(level: audioPlayer.leftLevel, label: "L", font: .system(.caption))
         Text("\(Int(audioPlayer.leftDecibel)) dB")
           .font(.system(.title3))
           .monospacedDigit()
           .frame(width: 80)
       }
       VStack {
-        dBMeter(level: audioPlayer.rightLevel, label: "R", font: .system(.caption))
+        VerticaldBMeter(level: audioPlayer.rightLevel, label: "R", font: .system(.caption))
         Text("\(Int(audioPlayer.rightDecibel)) dB")
           .font(.system(.title3))
           .monospacedDigit()
@@ -455,48 +455,18 @@ struct PlayerView: View {
   private var horizontalstereoMeters: some View {
     HStack(spacing: 10) {
       VStack {
-        dBMeter(level: audioPlayer.leftLevel, label: "L", font: .system(.caption), width: 40)
+        VerticaldBMeter(level: audioPlayer.leftLevel, label: "L", font: .system(.caption), width: 40)
         Text("\(Int(audioPlayer.leftDecibel)) dB")
           .font(.system(.title3))
           .monospacedDigit()
           .frame(width: 80)
       }
       VStack {
-        dBMeter(level: audioPlayer.rightLevel, label: "R", font: .system(.caption), width: 40)
+        VerticaldBMeter(level: audioPlayer.rightLevel, label: "R", font: .system(.caption), width: 40)
         Text("\(Int(audioPlayer.rightDecibel)) dB")
           .font(.system(.title3))
           .monospacedDigit()
           .frame(width: 80)
-      }
-    }
-  }
-}
-
-// ステレオメーターのコンポーネント
-struct dBMeter: View {
-  var level: CGFloat
-  var label: String
-  var font: Font = .headline
-  var width: CGFloat = 80  // デフォルトの幅を80に設定
-
-  var body: some View {
-    VStack(spacing: 8) {
-      Text(label).font(font).foregroundColor(.secondary)
-      ZStack(alignment: .bottom) {
-        // 背景の溝
-        RoundedRectangle(cornerRadius: 6)
-          .fill(Color.primary.opacity(0.1))
-          .frame(width: width, height: 200)
-
-        // 音量レベル（グラデーション）
-        RoundedRectangle(cornerRadius: 6)
-          .fill(
-            LinearGradient(
-              gradient: Gradient(colors: [.red, .white]), startPoint: .top,
-              endPoint: .bottom)
-          )
-          .frame(width: width, height: 200 * level)
-          .animation(.spring(response: 0.15, dampingFraction: 0.8), value: level)
       }
     }
   }

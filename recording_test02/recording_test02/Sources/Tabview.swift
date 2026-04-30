@@ -3,13 +3,23 @@ import SwiftUI
 struct ContentView: View {
   // アプリ起動時に最初に表示したいタブの番号を指定（例: 1 = Recordings）
   @State private var selectedTab = 0
+  // 設定画面のモニタリング機能のON/OFF状態を管理する変数
+  @AppStorage("isMonitoringEnabled") var isMonitoringEnabled: Bool = false
 
   var body: some View {
 
     TabView(selection: $selectedTab) {
 
-      Tab("Recordings", systemImage: "mic.fill", value: 0) {
-        RecordingsView()
+      Tab(
+        isMonitoringEnabled ? "Monitorings" : "Recordings",
+        systemImage: isMonitoringEnabled ? "headphones" : "mic.fill",
+        value: 0
+      ) {
+        if isMonitoringEnabled {
+          MonitoringsView()
+        } else {
+          RecordingsView()
+        }
       }
 
       Tab("Collections", systemImage: "square.stack.fill", value: 1) {

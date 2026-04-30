@@ -98,17 +98,20 @@ struct CollectionsView: View {
               // NavigationStack のための最新の遷移方法
               NavigationLink(value: item) {
                 Label {
-                    HStack {                        
-                        // お気に入りの場合は星マークを表示
-                        if viewModel.favoriteAudios.contains(item.lastPathComponent) {
-                            Image(systemName: "star.fill")
-                                .foregroundStyle(.green)
-                        }
-                        Text(item.lastPathComponent)
-                            .lineLimit(1)
+                  HStack {
+                    // お気に入りの場合は星マークを表示
+                    if viewModel.favoriteAudios.contains(item.lastPathComponent) {
+                      Image(systemName: "star.fill")
+                        .foregroundStyle(.green)
                     }
+                    Text(item.lastPathComponent)
+                      .lineLimit(1)
+                  }
                 } icon: {
-                    Image(systemName: item.lastPathComponent.contains("Recording") ? "mic" : "waveform")
+                  Image(
+                    systemName: item.lastPathComponent.contains("Recording")
+                      ? "mic"
+                      : (item.lastPathComponent.contains("Monitoring") ? "headphones" : "waveform"))
                 }
 
               }
