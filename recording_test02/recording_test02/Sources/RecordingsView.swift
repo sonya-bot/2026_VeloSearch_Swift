@@ -21,8 +21,8 @@ class AudioRecorder {
   // L/Rそれぞれの音量データ
   var leftDecibel: Float = 0.0
   var rightDecibel: Float = 0.0
-  var leftLevel: CGFloat = 0.01
-  var rightLevel: CGFloat = 0.01
+  var leftLevel: CGFloat = 0.0
+  var rightLevel: CGFloat = 0.0
 
   private var timer: Timer?
   private var levelTimer: Timer?
@@ -195,7 +195,7 @@ struct RecordingsView: View {
               VStack(spacing: 10) {
                 micAssignmentLabels
                   .padding(.top, -20)
-                  // .padding(.bottom, 10)
+                // .padding(.bottom, 10)
                 horizontalStereoMeters
                 // Spacer()
               }
@@ -363,7 +363,7 @@ struct VerticaldBMeter: View {
       ZStack(alignment: .bottom) {
         // 背景の溝
         RoundedRectangle(cornerRadius: 6)
-          .fill(Color.black.opacity(0.1))
+          .fill(Color.primary.opacity(0.1))
           .frame(width: 80, height: 200)
 
         // 音量レベル（グラデーション）
@@ -392,7 +392,7 @@ struct HorizontaldBMeter: View {
       ZStack(alignment: .leading) {
         // 背景の溝
         RoundedRectangle(cornerRadius: 6)
-          .fill(Color.black.opacity(0.1))
+          .fill(Color.primary.opacity(0.1))
           .frame(width: 300, height: 40)
 
         // 音量レベル（グラデーション）

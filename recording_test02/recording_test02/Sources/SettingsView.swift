@@ -1,4 +1,5 @@
 import AudioToolbox
+import Observation
 import SwiftUI
 
 // MARK: - 0. Preview(Xcode)
@@ -41,7 +42,7 @@ struct SettingsIconView: View {
   var body: some View {
     Image(systemName: systemName)
       .font(.system(size: 14, weight: .semibold))
-      .foregroundColor(.white)  // 背景色に対して常に白なので、テーマ問わず視認性が高い
+      .foregroundColor(.white)
       .frame(width: 28, height: 28)
       .background(color)
       .cornerRadius(6)
@@ -129,7 +130,7 @@ struct SettingsView: View {
             Text("Version")
               .font(.system(size: 16))
             Spacer()
-            Text("2.1.0")
+            Text("2.2.0")
               .foregroundColor(.secondary)
           }
         } header: {

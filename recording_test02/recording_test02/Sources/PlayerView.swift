@@ -1,11 +1,12 @@
 import AVFoundation
+import Foundation
 import Observation
 import SwiftUI
 
 // MARK: - 0. Preview(Xcode)
 struct PlayerView_Previews: PreviewProvider {
   static var previews: some View {
-    PlayerView(audioURL: URL(string: "https://example.com/audio.m4a")!)
+    PlayerView(audioURL: URL(string: "https://example.com/preview.m4a")!)
   }
 }
 
@@ -18,11 +19,18 @@ class AudioPlayer {
   var currentTime: TimeInterval = 0.0
   var duration: TimeInterval = 0.0
 
+  // メーター用のレベル変数 (0.0 〜 1.0)
+  var leftLevel: CGFloat = 0.0
+  var rightLevel: CGFloat = 0.0
+  var leftDecibel: Float = 0.0
+  var rightDecibel: Float = 0.0
+
   private var timer: Timer?
 
   func prepareAudio(audio: URL) {
     do {
       audioPlayer = try AVAudioPlayer(contentsOf: audio)
+      audioPlayer?.isMeteringEnabled = true
       audioPlayer?.prepareToPlay()
       duration = audioPlayer?.duration ?? 0.0
       currentTime = 0.0
@@ -40,10 +48,23 @@ class AudioPlayer {
       audioPlayer?.play()
       isPlaying = true
 
-      timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+      timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
         guard let self = self, let player = self.audioPlayer else { return }
         if player.isPlaying {
           self.currentTime = player.currentTime
+
+          // メーターの更新とレベル計算
+          player.updateMeters()
+          let minDb: Float = -60.0
+          let leftPower = player.averagePower(forChannel: 0)
+          let rightPower =
+            player.numberOfChannels > 1 ? player.averagePower(forChannel: 1) : leftPower
+
+          self.leftDecibel = leftPower
+          self.rightDecibel = rightPower
+          self.leftLevel = CGFloat(max(0.0, min(1.0, (leftPower - minDb) / abs(minDb))))
+          self.rightLevel = CGFloat(max(0.0, min(1.0, (rightPower - minDb) / abs(minDb))))
+
         } else {
           self.stopPlayback()
         }
@@ -63,6 +84,10 @@ class AudioPlayer {
     isPlaying = false
     timer?.invalidate()
     timer = nil
+    leftLevel = 0.0
+    rightLevel = 0.0
+    leftDecibel = 0.0
+    rightDecibel = 0.0
   }
 
   func seek(to time: TimeInterval) {
@@ -88,18 +113,18 @@ struct CSVRecord {
   let speed: String
 }
 
-// MARK: - 3. PlayerView (画面UI)
+// MARK: - 3. PlayerView (メイン画面)
 struct PlayerView: View {
   let initialURL: URL
 
   @State private var currentURL: URL
-
-  @State private var audioPlayer = AudioPlayer()  // ★ @StateObject -> @State
-
+  @State private var audioPlayer = AudioPlayer()
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.verticalSizeClass) var verticalSizeClass
 
   @State private var showingDeleteAlert = false
 
+  // 保存済みのデータ
   @State private var fileNote: String = ""
   @State private var fileExperimenter: String = ""
   @State private var fileWeather: String = ""
@@ -107,8 +132,9 @@ struct PlayerView: View {
   @State private var fileHumidity: String = ""
   @State private var fileScene: String = ""
 
-  @State private var isEditing = false
-
+  @State private var sheetDetent: PresentationDetent = .height(180)
+  // 編集用のデータ
+  @State private var isEditing = true
   @State private var editFileName = ""
   @State private var editNote = ""
   @State private var editExperimenter = ""
@@ -126,191 +152,105 @@ struct PlayerView: View {
   }
 
   var body: some View {
-    VStack(spacing: 20) {
-      Text("\(formatTime(audioPlayer.currentTime)) / \(formatTime(audioPlayer.duration))")
-        .font(.system(size: 30, weight: .thin))
-        .monospacedDigit()
-        .onChange(of: audioPlayer.currentTime) { oldTime, newTime in
-          updateSpeed(for: newTime)
-        }
 
-      HStack(spacing: 50) {
-        Button(action: {
-          if audioPlayer.isPlaying {
-            audioPlayer.pausePlayback()
-          } else {
-            audioPlayer.startPlayback()
+    ZStack {
+      // 背景色
+      Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+
+      // 横画面レイアウト
+      if verticalSizeClass == .compact {
+        HStack(spacing: 0) {
+          // 左:プレイヤーセクション
+          VStack(spacing: 10) {
+            timeDisplay
+            playPauseButton
+            slider
           }
-        }) {
-          Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-            .font(.system(size: 50))
-            .foregroundColor(.red)
+          .frame(maxWidth: 240)
+
+          // 中央:ステレオメーター
+          VStack(spacing: 10) {
+            horizontalstereoMeters
+          }
+          .padding(.horizontal, 10)
+
+          // 右:編集セクション
+          VStack(spacing: 10) {
+            EditSheetView(
+              isPresented: $isEditing,
+              sheetDetent: Binding(get: { .large }, set: { _ in }),
+              editFileName: $editFileName,
+              editExperimenter: $editExperimenter,
+              editScene: $editScene,
+              editWeather: $editWeather,
+              editTemperature: $editTemperature,
+              editHumidity: $editHumidity,
+              editNote: $editNote,
+              csvURL: currentURL.deletingPathExtension().appendingPathExtension("csv"),
+              onSave: saveChanges
+            )
+          }
+          .frame(maxWidth: 310)
         }
+        .padding(.top, 10)
+      } else {
+        // 縦画面レイアウト
+        VStack(spacing: 10) {
+          Spacer().frame(height: 20)
+          timeDisplay
+          Spacer().frame(height: 20)
+          playPauseButton
+          slider
+          verticalstereoMeters
+          Spacer()
+        }
+        .padding(.bottom, 20)
       }
-
-      Slider(
-        value: Binding(
-          get: { audioPlayer.currentTime },
-          set: { newValue in
-            audioPlayer.seek(to: newValue)
-          }
-        ), in: 0...(audioPlayer.duration > 0 ? audioPlayer.duration : 1.0)
-      )
-      .accentColor(.red)
-      .padding(.horizontal, 20)
-
-      List {
-        Section(
-          header: HStack {
-            Text("File Information")
-            Spacer()
-            Button(action: {
-              withAnimation {
-                if isEditing {
-                  saveChanges()
-                } else {
-                  startEditing()
-                }
-              }
-            }) {
-              Label(isEditing ? "Save" : "Edit", systemImage: isEditing ? "checkmark" : "pencil")
-                .textCase(.none)
-                .font(.body)
-                .bold(isEditing)
-                .foregroundColor(.blue)
-            }
-          }
-        ) {
-          if isEditing {
-            VStack(alignment: .leading, spacing: 12) {
-              Group {
-                Text("File Name").font(.caption).foregroundColor(.gray)
-                TextField("Enter file name", text: $editFileName)
-                  .textFieldStyle(.roundedBorder)
-
-                Text("Experimenter").font(.caption).foregroundColor(.gray)
-                TextField("Enter experimenter name", text: $editExperimenter)
-                  .textFieldStyle(.roundedBorder)
-              }
-
-              Group {
-                Text("Environment").font(.caption).foregroundColor(.gray)
-
-                Text("Weather").font(.caption).foregroundColor(.gray)
-                TextField("Enter weather", text: $editWeather)
-                  .textFieldStyle(.roundedBorder)
-
-                HStack {
-                  Text("Temperature").font(.caption).foregroundColor(.gray)
-                  Spacer()
-                  TextField("Temp", text: $editTemperature)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 60)
-                    .keyboardType(.numbersAndPunctuation)
-                  Text("°C").font(.caption).foregroundColor(.gray)
-
-                  Spacer()
-
-                  Text("Humidity").font(.caption).foregroundColor(.gray)
-                  Spacer()
-                  TextField("Hum", text: $editHumidity)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 60)
-                    .keyboardType(.numberPad)
-                  Text("%").font(.caption).foregroundColor(.gray)
-                }
-              }
-
-              Group {
-                Text("Scene").font(.caption).foregroundColor(.gray)
-                TextField("Enter pattern details", text: $editScene)
-                  .textFieldStyle(.roundedBorder)
-
-                Text("Note").font(.caption).foregroundColor(.gray)
-                TextEditor(text: $editNote)
-                  .frame(minHeight: 80)
-                  .padding(4)
-                  .scrollContentBackground(.hidden)
-                  .background(.quaternary)
-                  .cornerRadius(8)
-              }
-            }
-            .padding(.vertical, 4)
-
-          } else {
-            VStack(alignment: .leading, spacing: 12) {
-              Group {
-                Text("File Name: \(currentURL.lastPathComponent)").font(.caption).foregroundColor(
-                  .gray)
-                Text("Experimenter: \(fileExperimenter)").font(.caption).foregroundColor(.gray)
-              }
-              Group {
-                Text("Environment").font(.caption).foregroundColor(.gray)
-                Text("Weather: \(fileWeather)").font(.caption).foregroundColor(.gray)
-                HStack(spacing: 20) {
-                  Text("Temperature: \(fileTemperature.isEmpty ? "N/A" : "\(fileTemperature)°C")")
-                    .font(.caption).foregroundColor(.gray)
-                  Text("Humidity: \(fileHumidity.isEmpty ? "N/A" : "\(fileHumidity)%")").font(
-                    .caption
-                  ).foregroundColor(.gray)
-                }
-              }
-
-              Group {
-                Text("Scene: \(fileScene)").font(.caption).foregroundColor(.gray)
-                Text("Note").font(.caption).foregroundColor(.gray)
-                Text(fileNote).font(.body).foregroundColor(.gray)
-              }
-            }
-            .font(.body)
-
-            Text("FilePath: \(currentURL.path)")
-              .font(.caption)
-              .foregroundColor(.gray)
-              .padding(.top, 4)
-          }
-        }
-
-        let csvURL = currentURL.deletingPathExtension().appendingPathExtension("csv")
-
-        Section(
-          header: HStack {
-            Text("Speed Data (CSV)")
-            Spacer()
-            ShareLink(item: csvURL) {
-              Label("Share", systemImage: "square.and.arrow.up")
-                .textCase(.none)
-                .font(.body)
-                .foregroundColor(.blue)
-            }
-          }
-        ) {
-          NavigationLink(destination: CSVPreviewView(csvURL: csvURL)) {
-            Label(csvURL.lastPathComponent, systemImage: "doc.text.fill")
-          }
-        }
-      }
-      .scrollContentBackground(.hidden)
-      .padding(.bottom, 80)
     }
-    .padding()
+    // MARK: - SwiftUIネイティブのボトムシート実装
+    // 縦画面の時のみシートとして表示
+    .sheet(
+      isPresented: Binding(
+        get: { isEditing && verticalSizeClass != .compact },
+        set: { isEditing = $0 }
+      )
+    ) {
+      NavigationStack {
+        EditSheetView(
+          isPresented: $isEditing,
+          sheetDetent: $sheetDetent,
+          editFileName: $editFileName,
+          editExperimenter: $editExperimenter,
+          editScene: $editScene,
+          editWeather: $editWeather,
+          editTemperature: $editTemperature,
+          editHumidity: $editHumidity,
+          editNote: $editNote,
+          csvURL: currentURL.deletingPathExtension().appendingPathExtension("csv"),
+          onSave: saveChanges
+        )
+      }
+      // シートの高さを指定（最初はファイル名のみが見える低さ、中、全画面）
+      .presentationDetents([.height(180), .medium, .large], selection: $sheetDetent)
+      // 背景（プレイヤー画面）の操作を許可
+      .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+      // 上部のドラッグインジケーター（つまみ）を表示
+      .presentationDragIndicator(.visible)
+      // スワイプでシートが閉じないようにする
+      .interactiveDismissDisabled()
+    }
     .navigationTitle(currentURL.lastPathComponent)
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
       ToolbarItemGroup(placement: .topBarTrailing) {
-        // 1. 共有ボタン
         ShareLink(item: currentURL) {
           Image(systemName: "square.and.arrow.up")
         }
-
-        // 2. 削除ボタン
         Button(action: { showingDeleteAlert = true }) {
           Image(systemName: "trash")
-            .foregroundColor(.white)
         }
       }
     }
-
     .alert("Delete Recording?", isPresented: $showingDeleteAlert) {
       Button("Delete", role: .destructive) {
         audioPlayer.deleteAudio(audio: currentURL)
@@ -325,13 +265,17 @@ struct PlayerView: View {
     .onAppear {
       audioPlayer.prepareAudio(audio: currentURL)
       loadSavedData(for: currentURL.lastPathComponent)
+      startEditing()
       loadCSVData()
     }
     .onDisappear {
       audioPlayer.stopPlayback()
     }
+    // プレイヤー画面ではタブバーを非表示にして、ボトムシートとの被りを防ぐ
+    .toolbar(.hidden, for: .tabBar)
   }
 
+  // MARK: - 4.Components (編集用の部品)
   private func loadSavedData(for fileName: String) {
     fileNote =
       UserDefaults.standard.string(forKey: "\(fileName)_note") ?? UserDefaults.standard.string(
@@ -351,7 +295,6 @@ struct PlayerView: View {
     editTemperature = fileTemperature
     editHumidity = fileHumidity
     editScene = fileScene
-    isEditing = true
   }
 
   private func saveChanges() {
@@ -382,7 +325,6 @@ struct PlayerView: View {
         if fileManager.fileExists(atPath: oldCSVURL.path) {
           try fileManager.moveItem(at: oldCSVURL, to: newCSVURL)
         }
-
         newURL = destinationURL
         currentURL = destinationURL
         loadCSVData()
@@ -409,8 +351,6 @@ struct PlayerView: View {
     UserDefaults.standard.set(fileTemperature, forKey: "\(newFileName)_temperature")
     UserDefaults.standard.set(fileHumidity, forKey: "\(newFileName)_humidity")
     UserDefaults.standard.set(fileScene, forKey: "\(newFileName)_scene")
-
-    isEditing = false
   }
 
   private func formatTime(_ time: TimeInterval) -> String {
@@ -435,7 +375,7 @@ struct PlayerView: View {
       updateSpeed(for: 0.0)
     } catch {
       print("CSVファイルの読み込みに失敗、またはファイルが存在しません")
-      self.currentSpeed = "--"
+      self.currentSpeed = ""
     }
   }
 
@@ -443,6 +383,237 @@ struct PlayerView: View {
     guard !csvRecords.isEmpty else { return }
     if let closestRecord = csvRecords.min(by: { abs($0.time - time) < abs($1.time - time) }) {
       self.currentSpeed = closestRecord.speed
+    }
+  }
+
+  // MARK: - Components (UIパーツ)
+  // 時間表示
+  private var timeDisplay: some View {
+    Text("\(formatTime(audioPlayer.currentTime)) / \(formatTime(audioPlayer.duration))")
+      .font(.system(size: 40, weight: .thin))
+      .monospacedDigit()
+      .onChange(of: audioPlayer.currentTime) { oldTime, newTime in
+        updateSpeed(for: newTime)
+      }
+  }
+
+  // 再生/一時停止ボタン
+  private var playPauseButton: some View {
+    Button(action: {
+      if audioPlayer.isPlaying {
+        audioPlayer.pausePlayback()
+      } else {
+        audioPlayer.startPlayback()
+      }
+    }) {
+      ZStack {
+        Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+          .font(.system(size: 64))
+          .foregroundColor(.red)
+        Circle()
+          .strokeBorder(Color.primary.opacity(0.2), lineWidth: 4)
+          .frame(width: 74, height: 74)
+      }
+
+    }
+  }
+
+  // シークバー
+  private var slider: some View {
+    Slider(
+      value: Binding(
+        get: { audioPlayer.currentTime },
+        set: { newValue in
+          audioPlayer.seek(to: newValue)
+        }
+      ), in: 0...(audioPlayer.duration > 0 ? audioPlayer.duration : 1.0)
+    )
+    .accentColor(.red)
+    .padding(.horizontal, verticalSizeClass == .compact ? 10 : 30)
+  }
+
+  // ステレオメーター部分(縦画面用)
+  private var verticalstereoMeters: some View {
+    HStack(spacing: 50) {
+      VStack {
+        dBMeter(level: audioPlayer.leftLevel, label: "L", font: .system(.caption))
+        Text("\(Int(audioPlayer.leftDecibel)) dB")
+          .font(.system(.title3))
+          .monospacedDigit()
+          .frame(width: 80)
+      }
+      VStack {
+        dBMeter(level: audioPlayer.rightLevel, label: "R", font: .system(.caption))
+        Text("\(Int(audioPlayer.rightDecibel)) dB")
+          .font(.system(.title3))
+          .monospacedDigit()
+          .frame(width: 80)
+      }
+    }
+  }
+  // ステレオメーター部分(横画面用)
+  private var horizontalstereoMeters: some View {
+    HStack(spacing: 10) {
+      VStack {
+        dBMeter(level: audioPlayer.leftLevel, label: "L", font: .system(.caption), width: 40)
+        Text("\(Int(audioPlayer.leftDecibel)) dB")
+          .font(.system(.title3))
+          .monospacedDigit()
+          .frame(width: 80)
+      }
+      VStack {
+        dBMeter(level: audioPlayer.rightLevel, label: "R", font: .system(.caption), width: 40)
+        Text("\(Int(audioPlayer.rightDecibel)) dB")
+          .font(.system(.title3))
+          .monospacedDigit()
+          .frame(width: 80)
+      }
+    }
+  }
+}
+
+// ステレオメーターのコンポーネント
+struct dBMeter: View {
+  var level: CGFloat
+  var label: String
+  var font: Font = .headline
+  var width: CGFloat = 80  // デフォルトの幅を80に設定
+
+  var body: some View {
+    VStack(spacing: 8) {
+      Text(label).font(font).foregroundColor(.secondary)
+      ZStack(alignment: .bottom) {
+        // 背景の溝
+        RoundedRectangle(cornerRadius: 6)
+          .fill(Color.primary.opacity(0.1))
+          .frame(width: width, height: 200)
+
+        // 音量レベル（グラデーション）
+        RoundedRectangle(cornerRadius: 6)
+          .fill(
+            LinearGradient(
+              gradient: Gradient(colors: [.red, .white]), startPoint: .top,
+              endPoint: .bottom)
+          )
+          .frame(width: width, height: 200 * level)
+          .animation(.spring(response: 0.15, dampingFraction: 0.8), value: level)
+      }
+    }
+  }
+}
+
+// MARK: ボトムシート用コンポーネント
+struct EditSheetView: View {
+  @Binding var isPresented: Bool
+  @Binding var sheetDetent: PresentationDetent
+  @Binding var editFileName: String
+  @Binding var editExperimenter: String
+  @Binding var editScene: String
+  @Binding var editWeather: String
+  @Binding var editTemperature: String
+  @Binding var editHumidity: String
+  @Binding var editNote: String
+
+  var csvURL: URL
+  var onSave: () -> Void
+
+  // シートが引き上げられているか（.height(180) 以外か）を判定
+  var isEditingMode: Bool {
+    sheetDetent != .height(180)
+  }
+
+  var body: some View {
+    VStack(spacing: 0) {
+      // 引き上げられている時（編集モード）だけヘッダーを表示
+      if isEditingMode {
+        HStack {
+          Spacer()
+
+          Button("保存") {
+            onSave()
+            sheetDetent = .height(180)  // 保存後に元の高さに閉じる
+          }
+          .bold()
+          .foregroundColor(.blue)
+        }
+        .padding()
+        .background(Color(UIColor.secondarySystemGroupedBackground))
+      }
+
+      // リスト形式の入力フォーム
+      List {
+        Section {
+          TextField("ファイル名 (例: DRTF_Angle045_Take1)", text: $editFileName)
+            .font(.title3)
+            .bold()
+            .padding(.vertical, 4)
+            .disabled(!isEditingMode)  // 引き上げていない時は編集不可
+        } header: {
+          Text("File Name")
+        }
+
+        // 引き上げられている時だけ他の項目も表示
+        if isEditingMode {
+          Section(header: Text("Details")) {
+            HStack {
+              Text("Experimenter")
+              Spacer()
+              TextField("Name", text: $editExperimenter).multilineTextAlignment(.trailing)
+            }
+            HStack {
+              Text("Scene")
+              Spacer()
+              TextField("Pattern", text: $editScene).multilineTextAlignment(.trailing)
+            }
+          }
+
+          Section(header: Text("Environment")) {
+            HStack {
+              Text("Weather")
+              Spacer()
+              TextField("Weather", text: $editWeather).multilineTextAlignment(.trailing)
+            }
+            HStack {
+              Text("Temperature")
+              Spacer()
+              TextField("Temp", text: $editTemperature)
+                .multilineTextAlignment(.trailing).keyboardType(.decimalPad)
+              Text("°C").foregroundColor(.secondary)
+            }
+            HStack {
+              Text("Humidity")
+              Spacer()
+              TextField("Humid", text: $editHumidity)
+                .multilineTextAlignment(.trailing).keyboardType(.decimalPad)
+              Text("%").foregroundColor(.secondary)
+            }
+          }
+
+          Section(header: Text("Note")) {
+            TextEditor(text: $editNote)
+              .frame(minHeight: 80)
+          }
+
+          // CSVデータの共有と遷移
+          Section(
+            header: HStack {
+              Text("Speed Data (CSV)")
+              Spacer()
+              ShareLink(item: csvURL) {
+                Label("Share", systemImage: "square.and.arrow.up")
+                  .textCase(.none)
+                  .font(.body)
+                  .foregroundColor(.blue)
+              }
+            }
+          ) {
+            NavigationLink(destination: CSVPreviewView(csvURL: csvURL)) {
+              Label(csvURL.lastPathComponent, systemImage: "doc.text.fill")
+            }
+          }
+        }
+      }
+      .listStyle(.insetGrouped)
     }
   }
 }
