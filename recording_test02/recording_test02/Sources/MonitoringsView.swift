@@ -218,6 +218,7 @@ struct MonitoringsView: View {
           VStack(spacing: 20) {
             Spacer().frame(height: 80)
             timeDisplay
+              .padding(.top, 30)
             monitoringStatus
             micAssignmentLabels
             // Spacer()
