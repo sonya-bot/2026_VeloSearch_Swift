@@ -243,7 +243,7 @@ struct PlayerView: View {
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
       ToolbarItemGroup(placement: .topBarTrailing) {
-        ShareLink(item: currentURL) {
+        Button(action: { shareAudio(url: currentURL) }) {
           Image(systemName: "square.and.arrow.up")
         }
         Button(action: { showingDeleteAlert = true }) {
@@ -351,6 +351,28 @@ struct PlayerView: View {
     UserDefaults.standard.set(fileTemperature, forKey: "\(newFileName)_temperature")
     UserDefaults.standard.set(fileHumidity, forKey: "\(newFileName)_humidity")
     UserDefaults.standard.set(fileScene, forKey: "\(newFileName)_scene")
+  }
+
+  private func shareAudio(url: URL) {
+    let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+
+    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+       let window = windowScene.windows.first(where: { $0.isKeyWindow }),
+       let rootVC = window.rootViewController {
+
+      var topVC = rootVC
+      while let presentedVC = topVC.presentedViewController {
+        topVC = presentedVC
+      }
+
+      if let popover = activityVC.popoverPresentationController {
+        popover.sourceView = topVC.view
+        popover.sourceRect = CGRect(x: topVC.view.bounds.midX, y: topVC.view.bounds.midY, width: 0, height: 0)
+        popover.permittedArrowDirections = []
+      }
+
+      topVC.present(activityVC, animated: true)
+    }
   }
 
   private func formatTime(_ time: TimeInterval) -> String {

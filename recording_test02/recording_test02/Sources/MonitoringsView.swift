@@ -53,12 +53,54 @@ class AudioMonitor {
 
     do {
       try audioSession.setCategory(
-        .playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .allowBluetoothA2DP])
+        .playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
 
       try audioSession.setActive(true)
 
+      if let soundUrl = Bundle.main.url(forResource: soundSource.fileName, withExtension: "wav") {
+        audioPlayer = try? AVAudioPlayer(contentsOf: soundUrl)
+        audioPlayer?.prepareToPlay()  // 事前にメモリに読み込み、ルートを確定させる
+      }
+
       if audioSession.maximumInputNumberOfChannels >= 2 {
         try audioSession.setPreferredInputNumberOfChannels(2)
+      }
+
+      // 録音マイク（前面/背面）とステレオ設定
+      if let availableInputs = audioSession.availableInputs,
+        let builtInMic = availableInputs.first(where: { $0.portType == .builtInMic })
+      {
+        if let dataSources = builtInMic.dataSources {
+          let targetOrientation: AVAudioSession.Orientation = (micSource == "背面") ? .back : .front
+          if let selectedDataSource = dataSources.first(where: {
+            $0.orientation == targetOrientation
+          }) {
+
+            // 対象のマイク(前面/背面)をハードウェアにセット
+            try builtInMic.setPreferredDataSource(selectedDataSource)
+
+            // マイクのステレオ指向性をセット
+            if let supportedPatterns = selectedDataSource.supportedPolarPatterns,
+              supportedPatterns.contains(.stereo)
+            {
+              try selectedDataSource.setPreferredPolarPattern(.stereo)
+              print("ステレオ入力を適用しました")
+            } else {
+              print("このマイクはステレオ入力をサポートしていません")
+            }
+
+            // デバイス全体にこのマイク入力を適用
+            try audioSession.setPreferredInput(builtInMic)
+            print("マイク設定: \(micSource) を選択")
+          }
+        }
+      }
+
+      // 端末の向き設定を反映（必ずマイク設定の「後」に行う）
+      if orientation == "縦" {
+        try audioSession.setPreferredInputOrientation(.portrait)
+      } else {
+        try audioSession.setPreferredInputOrientation(.landscapeRight)
       }
 
       // 録音設定
@@ -99,15 +141,22 @@ class AudioMonitor {
         if Task.isCancelled { return }
 
         // 3. 音源再生
-        await MainActor.run { self.measurementStatus = "テスト音再生中" }
-        if let soundUrl = Bundle.main.url(forResource: soundSource.fileName, withExtension: "wav") {
-          audioPlayer = try? AVAudioPlayer(contentsOf: soundUrl)
-          let duration = audioPlayer?.duration ?? 0
-          audioPlayer?.play()
+        // await MainActor.run { self.measurementStatus = "テスト音再生中" }
+        // if let soundUrl = Bundle.main.url(forResource: soundSource.fileName, withExtension: "wav") {
+        //   audioPlayer = try? AVAudioPlayer(contentsOf: soundUrl)
+        //   let duration = audioPlayer?.duration ?? 0
+        //   audioPlayer?.play()
 
-          // 4. 音源の長さ分待機
-          try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-        }
+        //   // 4. 音源の長さ分待機
+        //   try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+        // }
+        await MainActor.run { self.measurementStatus = "テスト音再生中" }
+        // ここでは既に準備済みのプレイヤーを再生するだけにする
+        let duration = audioPlayer?.duration ?? 0
+        audioPlayer?.play()
+
+        // 4. 音源の長さ分待機
+        try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
 
         if Task.isCancelled { return }
 

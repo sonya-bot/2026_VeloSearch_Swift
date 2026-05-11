@@ -10,10 +10,10 @@
 		"swift"
 	],
 	"argv": [
-		"/usr/local/bin/xcode-build-server"
+		"/opt/homebrew/bin/xcode-build-server"
 	],
-	"workspace": "/Users/sonya/Develop/Swift/Recording_Apps/recording_test02/recording_test02.xcworkspace",
-	"build_root": "/Users/sonya/Library/Developer/Xcode/DerivedData/recording_test02-buumavgurzfvpaaptxorzwplzwwx",
+	"workspace": "/Users/Souma/Develop/Swift/Recording_Apps/recording_test02/recording_test02.xcworkspace",
+	"build_root": "/Users/Souma/Library/Developer/Xcode/DerivedData/recording_test02-ancecrwhbwupvaezvyvpqjbfaaww",
 	"scheme": "recording_test02",
 	"kind": "xcode"
 }
