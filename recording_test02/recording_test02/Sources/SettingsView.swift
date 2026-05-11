@@ -57,6 +57,7 @@ enum MonitoringSoundSource: String, CaseIterable, Identifiable {
   case whiteNoise = "ホワイトノイズ"
   case sineWave1k = "サイン波 (1kHz)"
   case cat = "猫の鳴き声"
+  case beep = "ビープ音"
 
   var id: String { self.rawValue }
 
@@ -68,6 +69,7 @@ enum MonitoringSoundSource: String, CaseIterable, Identifiable {
     case .whiteNoise: return "white_noise"
     case .sineWave1k: return "sine_1k"
     case .cat: return "cat"
+    case .beep: return "beep"
     }
   }
 }
