@@ -64,7 +64,7 @@ enum MonitoringSoundSource: String, CaseIterable, Identifiable {
   // 実際のファイル名（プロジェクトにドラッグ&ドロップしたファイル名と合わせます）
   var fileName: String {
     switch self {
-    case .sweep: return "sweep_signal"
+    case .sweep: return "sweep"
     case .pinkNoise: return "pink_noise"
     case .whiteNoise: return "white_noise"
     case .sineWave1k: return "sine_1k"
