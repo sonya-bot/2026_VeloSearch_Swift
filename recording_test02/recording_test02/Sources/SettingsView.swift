@@ -52,7 +52,9 @@ enum OutputDeviceOption: String, CaseIterable, Identifiable {
 
 //  モニタリング音源の選択肢を定義
 enum MonitoringSoundSource: String, CaseIterable, Identifiable {
-  case sweep = "スイープ信号 (20Hz-20kHz)"
+  case sweep_5s = "スイープ信号 (5秒)"
+  case sweep_10s = "スイープ信号 (10秒)"
+  case sweep_30s = "スイープ信号 (30秒)"
   case pinkNoise = "ピンクノイズ"
   case whiteNoise = "ホワイトノイズ"
   case sineWave1k = "サイン波 (1kHz)"
@@ -64,7 +66,9 @@ enum MonitoringSoundSource: String, CaseIterable, Identifiable {
   // 実際のファイル名（プロジェクトにドラッグ&ドロップしたファイル名と合わせます）
   var fileName: String {
     switch self {
-    case .sweep: return "sweep"
+    case .sweep_5s: return "sweep_5s"
+    case .sweep_10s: return "sweep_10s"
+    case .sweep_30s: return "sweep_30s"
     case .pinkNoise: return "pink_noise"
     case .whiteNoise: return "white_noise"
     case .sineWave1k: return "sine_1k"
