@@ -199,7 +199,7 @@ struct SettingsView: View {
 // 警告音の選択画面
 struct AlertSoundSettingView: View {
   @AppStorage("warningSoundID") private var selectedSoundID: Int = 1052
-  
+
   // プレビュー再生用のオーディオプレイヤー
   @State private var audioPlayer: AVAudioPlayer?
 
@@ -325,7 +325,8 @@ struct MonitoringSettingView: View {
   @State private var isExternalOutputAvailable: Bool = false
 
   // モニタリング音源の選択
-  @AppStorage("selectedMonitoringSound") var selectedMonitoringSound: MonitoringSoundSource = .sweep
+  @AppStorage("selectedMonitoringSound") var selectedMonitoringSound: MonitoringSoundSource =
+    .sweep_5s
 
   var body: some View {
     Form {
@@ -464,7 +465,7 @@ struct MonitoringSettingView: View {
 
 // MARK: - 音源選択およびプレビュー画面 (子画面)
 struct MonitoringSoundSelectionView: View {
-  @AppStorage("selectedMonitoringSound") var selectedMonitoringSound: MonitoringSoundSource = .sweep
+  @AppStorage("selectedMonitoringSound") var selectedMonitoringSound: MonitoringSoundSource = .sweep_5s
 
   // プレビュー再生用のオーディオプレイヤー
   @State private var audioPlayer: AVAudioPlayer?

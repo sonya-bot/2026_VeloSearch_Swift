@@ -48,8 +48,8 @@ class AudioMonitor {
     // 設定から音源を取得
     let soundRawValue =
       UserDefaults.standard.string(forKey: "selectedMonitoringSound")
-      ?? MonitoringSoundSource.sweep.rawValue
-    let soundSource = MonitoringSoundSource(rawValue: soundRawValue) ?? .sweep
+      ?? MonitoringSoundSource.sweep_5s.rawValue
+    let soundSource = MonitoringSoundSource(rawValue: soundRawValue) ?? .sweep_5s
 
     do {
       try audioSession.setCategory(
