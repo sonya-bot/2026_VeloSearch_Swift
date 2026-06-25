@@ -1,0 +1,12 @@
+{
+  "MLModelVersionStringKey" : "--",
+  "MLModelDescriptionKey" : "(8方向識別モデル)",
+  "MLModelCreatorDefinedKey" : {
+    "com.github.apple.coremltools.conversion_date" : "2026-06-24",
+    "com.github.apple.coremltools.source" : "torch==2.12.1",
+    "com.github.apple.coremltools.version" : "9.0",
+    "com.github.apple.coremltools.source_dialect" : "TorchScript"
+  },
+  "MLModelAuthorKey" : "2026_VeloSearch Team",
+  "MLModelLicenseKey" : "--"
+}
