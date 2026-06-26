@@ -17,21 +17,33 @@ class MLModelManager {
     
     func predict(features: MLMultiArray) -> (angle: Int, probability: Float)? {
         guard let model = model else { return nil }
+
         do {
             let input = _20260611_01_Best_hybrid_model_epoch90Input(audioFeatures: features)
             let output = try model.prediction(input: input)
-            
+
+            // デバッグ用
+            // print("===== CoreML Output =====")
+
             var maxProb: Float = 0.0
-            var maxIndex: Int = 0
-            
+            var maxIndex = 0
+
             for i in 0..<8 {
-                let prob = output.directionProbabilities[i].floatValue * 100.0
+                let logProb = output.directionProbabilities[i].floatValue
+                let prob = exp(logProb) * 100.0
+
+                // print("Class \(i): \(prob)%")
+
                 if prob > maxProb {
                     maxProb = prob
                     maxIndex = i
                 }
             }
+
+            // print("Max = \(maxProb)%, index = \(maxIndex)")
+
             return (maxIndex * 45, maxProb)
+
         } catch {
             print("推論エラー: \(error)")
             return nil

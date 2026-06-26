@@ -104,6 +104,8 @@ class AudioFeatureExtractor {
         var imagL = [Float](repeating: 0, count: nFft)
         var realR = [Float](repeating: 0, count: nFft)
         var imagR = [Float](repeating: 0, count: nFft)
+        var sumIld: Float = 0
+        var sqSumIld: Float = 0
         
         // 1. フレーム単位での STFT 実行
         for t in 0..<targetFrames {
@@ -192,6 +194,11 @@ class AudioFeatureExtractor {
                 sumL += vL; sqSumL += vL*vL
                 sumR += vR; sqSumR += vR*vR
                 eSum += vL
+
+                // ILDの正規化
+                let vIld = ild[m][t]
+                sumIld += vIld
+                sqSumIld += vIld * vIld
             }
             let avgEnergy = eSum / Float(nMels)
             frameEnergies[t] = avgEnergy
@@ -202,9 +209,47 @@ class AudioFeatureExtractor {
         let meanAll = (sumL + sumR) / (totalElements * 2)
         let variance = ((sqSumL + sqSumR) / (totalElements * 2)) - (meanAll * meanAll)
         let stdAll = sqrt(max(variance, 0)) + 1e-6
+        let meanIld = sumIld / totalElements
+        let varianceIld = (sqSumIld / totalElements) - meanIld * meanIld
+        let stdIld = sqrt(max(varianceIld, 0)) + 1e-6
         
         let threshold = maxEnergy - 25.0
-        
+
+        // Pythonと同じ無音判定
+        if stdAll < 1e-4 {
+            print("Silent frame detected")
+
+            do {
+                return try MLMultiArray(
+                    shape: [1, 5, 64, 349] as [NSNumber],
+                    dataType: .float16
+                )
+            } catch {
+                return nil
+            }
+        }
+                
+        // デバッグ用
+        print("===== Feature Statistics =====")
+
+        var minLogL: Float = .greatestFiniteMagnitude
+        var maxLogL: Float = -.greatestFiniteMagnitude
+        var sumLogL: Float = 0
+
+        for m in 0..<nMels {
+            for t in 0..<targetFrames {
+                let v = logMelL[m][t]
+                minLogL = min(minLogL, v)
+                maxLogL = max(maxLogL, v)
+                sumLogL += v
+            }
+        }
+
+        print("LogMel L")
+        print("min :", minLogL)
+        print("max :", maxLogL)
+        print("mean:", sumLogL / Float(nMels * targetFrames))
+
         // 4. 最終テンソルへの書き込み
         do {
             // [1, 5, 64, 349] の MLMultiArray 作成 (Float16)
@@ -215,13 +260,14 @@ class AudioFeatureExtractor {
                     let isSilence = frameEnergies[t] < threshold
                     
                     // 正規化
-                    let normL = stdAll < 1e-4 ? 0 : (logMelL[m][t] - meanAll) / stdAll
-                    let normR = stdAll < 1e-4 ? 0 : (logMelR[m][t] - meanAll) / stdAll
-                    
+                    let normL = (logMelL[m][t] - meanAll) / stdAll
+                    let normR = (logMelR[m][t] - meanAll) / stdAll
+                                        
                     // マスキング適用
                     let outCos = isSilence ? 0.0 : cosIpd[m][t]
                     let outSin = isSilence ? 0.0 : sinIpd[m][t]
-                    let outIld = isSilence ? 0.0 : ild[m][t]
+                    let normIld = stdIld < 1e-4 ? 0 : (ild[m][t] - meanIld) / stdIld
+                    let outIld = isSilence ? 0 : normIld
                     
                     // MLMultiArray への代入 [1(0), CH, Mel, Frame]
                     multiArray[[0, 0, m, t] as [NSNumber]] = NSNumber(value: normL)
