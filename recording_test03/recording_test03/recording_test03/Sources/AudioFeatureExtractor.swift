@@ -14,6 +14,10 @@ class AudioFeatureExtractor {
     private var bufferL: [Float] = []
     private var bufferR: [Float] = []
     
+    var currentBufferCount: Int {
+        return bufferL.count
+    }
+    
     // Melフィルター行列 [Melビン(64)][周波数ビン(513)]
     private var melWeights: [[Float]] = []
     
@@ -43,10 +47,11 @@ class AudioFeatureExtractor {
         guard let path = Bundle.main.path(forResource: "mel_filters", ofType: "json"),
               let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let weightsFlat = json["weights"] as? [Float] else {
+              let weightsDouble = json["weights"] as? [Double] else {
             print("エラー: mel_filters.json が見つからないか破損しています。")
             return
         }
+        let weightsFlat = weightsDouble.map { Float($0) }
         
         let nStft = nFft / 2 + 1 // 513
         melWeights = Array(repeating: Array(repeating: 0.0, count: nStft), count: nMels)
@@ -168,13 +173,13 @@ class AudioFeatureExtractor {
                 sinIpd[m][t] = sin(angle)
             }
         }
-        
+                
         // 3. Pythonに合わせたマスキングと正規化 (Threshold = max - 25.0dB)
         var sumL: Float = 0
         var sqSumL: Float = 0
         var sumR: Float = 0
         var sqSumR: Float = 0
-        var totalElements = Float(nMels * targetFrames)
+        let totalElements = Float(nMels * targetFrames)
         
         var maxEnergy: Float = -1000.0
         var frameEnergies = [Float](repeating: 0, count: targetFrames)

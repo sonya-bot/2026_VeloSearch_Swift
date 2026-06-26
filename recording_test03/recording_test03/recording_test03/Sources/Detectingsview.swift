@@ -52,6 +52,13 @@ class Detection {
     var currentAIAngle: Int = 0
     var currentAIProbability: Float = 0.0
     var currentGroundTruth: String = "FalseDetect" // ピッカー選択値
+
+    // ===== デバッグ情報 =====
+    var debugBufferCount: Int = 0
+    var debugFeatureCreated: Bool = false
+    var debugPredictExecuted: Bool = false
+    var debugPredictSuccess: Bool = false
+    var debugMessage: String = ""
     
     private var timer: Timer?
     private var startTime: Date?
@@ -92,8 +99,17 @@ class Detection {
                 self.calculateDecibel(buffer: buffer)
                 
                 // 特徴量抽出と推論
+                self.debugBufferCount = self.featureExtractor.currentBufferCount
+
                 if let features = self.featureExtractor.appendAndExtract(buffer: buffer) {
+
+                    self.debugFeatureCreated = true
                     self.executeAI(features: features)
+
+                } else {
+
+                    self.debugFeatureCreated = false
+
                 }
             }
             
@@ -105,7 +121,9 @@ class Detection {
             elapsedTime = 0.0
             startTime = Date()
             
-            speedcsvData = ["elapsed_time,speed_kmh,volume_db,status,ai_angle,ai_probability,ground_truth_angle,device_orientation,mic_source"]
+            speedcsvData = [
+            "elapsed_time,speed_kmh,volume_db,status,ai_angle,ai_probability,ground_truth_angle,device_orientation,mic_source,buffer_count,feature_created,predict_executed,predict_success"
+            ]
             
             timer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] _ in
                 guard let self = self, let startTime = self.startTime else { return }
@@ -133,13 +151,24 @@ class Detection {
     }
     
     private func executeAI(features: MLMultiArray) {
+        debugPredictExecuted = true
         Task.detached { [weak self] in
             guard let self = self else { return }
             if let result = self.mlManager.predict(features: features) {
                 Task { @MainActor in
+                    self.debugPredictSuccess = true
+
                     self.currentAIAngle = result.angle
                     self.currentAIProbability = result.probability
-                    self.state = result.probability >= self.mlManager.detectionThreshold ? .detect : .safe
+
+                    self.state =
+                        result.probability >= self.mlManager.detectionThreshold
+                        ? .detect
+                        : .safe
+                }
+            } else {
+                Task { @MainActor in
+                    self.debugPredictSuccess = false
                 }
             }
         }
@@ -156,8 +185,26 @@ class Detection {
     }
     
     private func recordCSVLog(locationManager: LocationManager) {
+
         let speed = locationManager.speed * 3.6
-        let logLine = String(format: "%.2f,%.1f,%.1f,%@,%d,%.1f,%@,%@,%@", elapsedTime, speed, currentDecibel, state.title, currentAIAngle, currentAIProbability, currentGroundTruth, currentOrientation, currentMicSource)
+
+        let logLine = String(
+            format: "%.2f,%.1f,%.1f,%@,%d,%.1f,%@,%@,%@,%d,%@,%@,%@",
+            elapsedTime,
+            speed,
+            currentDecibel,
+            state.title,
+            currentAIAngle,
+            currentAIProbability,
+            currentGroundTruth,
+            currentOrientation,
+            currentMicSource,
+            debugBufferCount,
+            debugFeatureCreated.description,
+            debugPredictExecuted.description,
+            debugPredictSuccess.description
+        )
+
         speedcsvData.append(logLine)
     }
     
