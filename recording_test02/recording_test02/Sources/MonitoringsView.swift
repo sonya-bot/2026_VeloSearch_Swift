@@ -30,6 +30,15 @@ class AudioMonitor {
   private var levelTimer: Timer?
   private var startTime: Date?
   private var measurementTask: Task<Void, Never>?
+  private let recorderDelegate = AudioRecorderDelegateProxy()
+  // private let preRollDuration: TimeInterval = 1.0
+  // private let postRollDuration: TimeInterval = 1.0
+
+  init() {
+    recorderDelegate.didFinishRecording = { [weak self] in
+      self?.finishRecording()
+    }
+  }
 
   func startRecording(orientation: String, micSource: String, prefix: String = "Monitoring") {
     // 録音ロジックは RecordingsView.swift を継承
@@ -115,12 +124,18 @@ class AudioMonitor {
       ]
 
       audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
+      audioRecorder?.delegate = recorderDelegate
       audioRecorder?.isMeteringEnabled = true
+      let soundDuration = audioPlayer?.duration ?? 0
+      let recordingDuration = soundDuration
 
       // --- 自動測定シーケンスの開始 ---
       isRecording = true
       elapsedTime = 0.0
       startTime = Date()
+      audioRecorder?.record(forDuration: recordingDuration)
+      measurementStatus = "テスト音再生中"
+      audioPlayer?.play()
 
       // 時間計測タイマー
       timer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] _ in
@@ -130,45 +145,27 @@ class AudioMonitor {
 
       startMonitoring()
 
-      // シーケンス制御: 録音開始 -> 1s待機 -> 再生 -> 終了待機 -> 1s待機 -> 停止
-      measurementTask = Task {
-        // 1. 録音開始
-        audioRecorder?.record()
-        await MainActor.run { self.measurementStatus = "録音中 (前余白)" }
-
-        // 2. 前余白 1秒待機
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-        if Task.isCancelled { return }
-
-        // 3. 音源再生
-        // await MainActor.run { self.measurementStatus = "テスト音再生中" }
-        // if let soundUrl = Bundle.main.url(forResource: soundSource.fileName, withExtension: "wav") {
-        //   audioPlayer = try? AVAudioPlayer(contentsOf: soundUrl)
-        //   let duration = audioPlayer?.duration ?? 0
-        //   audioPlayer?.play()
-
-        //   // 4. 音源の長さ分待機
-        //   try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-        // }
-        await MainActor.run { self.measurementStatus = "テスト音再生中" }
-        // ここでは既に準備済みのプレイヤーを再生するだけにする
-        let duration = audioPlayer?.duration ?? 0
-        audioPlayer?.play()
-
-        // 4. 音源の長さ分待機
-        try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-
-        if Task.isCancelled { return }
-
-        // 5. 後余白 1秒待機
-        await MainActor.run { self.measurementStatus = "録音中 (後余白)" }
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-
-        // 6. 自動停止
-        await MainActor.run {
-          self.stopRecording()
-        }
-      }
+      // 表示と再生のシーケンス制御: 前余白 -> 再生 -> 後余白
+      // measurementTask = Task {
+      //   // 1. 前余白
+      //   await MainActor.run { self.measurementStatus = "録音中 (前余白)" }
+      //
+      //   // 2. 前余白 1秒待機
+      //   try? await Task.sleep(nanoseconds: UInt64(preRollDuration * 1_000_000_000))
+      //   if Task.isCancelled { return }
+      //
+      //   // 3. 音源再生
+      //   await MainActor.run { self.measurementStatus = "テスト音再生中" }
+      //   audioPlayer?.play()
+      //
+      //   // 4. 音源の長さ分待機
+      //   try? await Task.sleep(nanoseconds: UInt64(soundDuration * 1_000_000_000))
+      //   if Task.isCancelled { return }
+      //
+      //   // 5. 後余白 1秒待機
+      //   await MainActor.run { self.measurementStatus = "録音中 (後余白)" }
+      //   try? await Task.sleep(nanoseconds: UInt64(postRollDuration * 1_000_000_000))
+      // }
 
     } catch {
       print("録音エラー: \(error.localizedDescription)")
@@ -179,9 +176,15 @@ class AudioMonitor {
     measurementTask?.cancel()
     audioRecorder?.stop()
     audioPlayer?.stop()
+    finishRecording()
+  }
+
+  private func finishRecording() {
     isRecording = false
     timer?.invalidate()
     levelTimer?.invalidate()
+    measurementTask?.cancel()
+    measurementTask = nil
     leftLevel = 0.0
     rightLevel = 0.0
     measurementStatus = "待機中"
@@ -218,6 +221,16 @@ class AudioMonitor {
       }
       return dailyFiles.count + 1
     } catch { return 1 }
+  }
+}
+
+private class AudioRecorderDelegateProxy: NSObject, AVAudioRecorderDelegate {
+  var didFinishRecording: (() -> Void)?
+
+  func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+    DispatchQueue.main.async { [weak self] in
+      self?.didFinishRecording?()
+    }
   }
 }
 
