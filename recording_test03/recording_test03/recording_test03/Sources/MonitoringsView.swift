@@ -130,17 +130,13 @@ class AudioMonitor {
 
       startMonitoring()
 
-      // シーケンス制御: 録音開始 -> 1s待機 -> 再生 -> 終了待機 -> 1s待機 -> 停止
+      // シーケンス制御: 録音開始 -> 再生 -> 終了待機 -> 停止
       measurementTask = Task {
         // 1. 録音開始
         audioRecorder?.record()
-        await MainActor.run { self.measurementStatus = "録音中 (前余白)" }
+        await MainActor.run { self.measurementStatus = "テスト音再生中" }
 
-        // 2. 前余白 1秒待機
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-        if Task.isCancelled { return }
-
-        // 3. 音源再生
+        // 2. 音源再生
         // await MainActor.run { self.measurementStatus = "テスト音再生中" }
         // if let soundUrl = Bundle.main.url(forResource: soundSource.fileName, withExtension: "wav") {
         //   audioPlayer = try? AVAudioPlayer(contentsOf: soundUrl)
@@ -150,21 +146,15 @@ class AudioMonitor {
         //   // 4. 音源の長さ分待機
         //   try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
         // }
-        await MainActor.run { self.measurementStatus = "テスト音再生中" }
         // ここでは既に準備済みのプレイヤーを再生するだけにする
         let duration = audioPlayer?.duration ?? 0
         audioPlayer?.play()
 
-        // 4. 音源の長さ分待機
+        // 3. 音源の長さ分待機
         try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-
         if Task.isCancelled { return }
 
-        // 5. 後余白 1秒待機
-        await MainActor.run { self.measurementStatus = "録音中 (後余白)" }
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-
-        // 6. 自動停止
+        // 4. 自動停止
         await MainActor.run {
           self.stopRecording()
         }
