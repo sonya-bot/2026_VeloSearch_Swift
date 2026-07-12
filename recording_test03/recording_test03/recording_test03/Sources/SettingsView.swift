@@ -101,6 +101,7 @@ struct SettingsView: View {
     .landscapeRight
   @AppStorage("micSource") private var selectedMicSource: MicSourceOption = .back
   @AppStorage("isMonitoringEnabled") private var isMonitoringEnabled = false
+  @AppStorage("showDebugOverlay") private var showDebugOverlay = false
 
   var body: some View {
     NavigationStack {
@@ -177,6 +178,19 @@ struct SettingsView: View {
           Text("Recording Settings")
         }
 
+        // MARK: - デベロッパセクション
+        Section {
+          NavigationLink(destination: DeveloperSettingsView()) {
+            HStack(spacing: 12) {
+              SettingsIconView(systemName: "wrench.and.screwdriver.fill", color: .gray)
+              Text("デベロッパ")
+              Spacer()
+              Text(showDebugOverlay ? "ON" : "OFF")
+                .foregroundColor(.secondary)
+            }
+          }
+        }
+
         // Aboutセクション
         Section {
           HStack {
@@ -192,6 +206,83 @@ struct SettingsView: View {
       }
       .navigationTitle("Settings")
     }
+  }
+}
+
+struct DeveloperSettingsView: View {
+  @AppStorage("showDebugOverlay") private var showDebugOverlay = false
+  @State private var devCSVFiles: [URL] = []
+
+  var body: some View {
+    Form {
+      Section {
+        Toggle(isOn: $showDebugOverlay) {
+          HStack(spacing: 12) {
+            SettingsIconView(systemName: "ladybug.fill", color: .gray)
+            Text("デバッグ表示")
+              .font(.system(size: 16))
+          }
+        }
+        .tint(.green)
+      } footer: {
+        Text("Detect画面にAI結果、更新間隔、スキップ回数を表示します。")
+      }
+
+      Section {
+        if devCSVFiles.isEmpty {
+          Text("デバッグCSVはまだありません")
+            .foregroundColor(.secondary)
+        } else {
+          ForEach(devCSVFiles, id: \.self) { csvURL in
+            NavigationLink(destination: CSVPreviewView(csvURL: csvURL)) {
+              Label(csvURL.lastPathComponent, systemImage: "doc.text.fill")
+            }
+          }
+        }
+      } header: {
+        Text("Debug CSV")
+      } footer: {
+        Text("Detect画面で保存されたDev_から始まるCSVのみを表示します。")
+      }
+    }
+    .navigationTitle("Developer")
+    .navigationBarTitleDisplayMode(.inline)
+    .toolbar(.hidden, for: .tabBar)
+    .toolbar {
+      ToolbarItem(placement: .topBarTrailing) {
+        Button {
+          loadDevCSVFiles()
+        } label: {
+          Image(systemName: "arrow.clockwise")
+        }
+      }
+    }
+    .onAppear {
+      loadDevCSVFiles()
+    }
+  }
+
+  private func loadDevCSVFiles() {
+    let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    let csvURLs =
+      (try? FileManager.default.contentsOfDirectory(
+        at: documentsURL,
+        includingPropertiesForKeys: [.contentModificationDateKey]
+      )) ?? []
+
+    // 通常CSVと混在させないため、デバッグ用の命名規則だけを一覧対象にする。
+    devCSVFiles = csvURLs
+      .filter { url in
+        url.pathExtension.lowercased() == "csv" && url.lastPathComponent.hasPrefix("Dev_")
+      }
+      .sorted { lhs, rhs in
+        modificationDate(for: lhs) > modificationDate(for: rhs)
+      }
+  }
+
+  private func modificationDate(for url: URL) -> Date {
+    let values = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+    return values?.contentModificationDate ?? .distantPast
   }
 }
 

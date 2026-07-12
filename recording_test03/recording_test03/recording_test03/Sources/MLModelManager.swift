@@ -2,14 +2,14 @@ import Foundation
 import CoreML
 
 class MLModelManager {
-    private var model: _20260611_01_Best_hybrid_model_epoch90?
+    private var model: _20260703_225631_hybrid_Best_model_epoch53?
     let detectionThreshold: Float = 50.0 // しきい値 50%
     
     init() {
         do {
             let config = MLModelConfiguration()
             config.computeUnits = .all
-            self.model = try _20260611_01_Best_hybrid_model_epoch90(configuration: config)
+            self.model = try _20260703_225631_hybrid_Best_model_epoch53(configuration: config)
         } catch {
             print("Core MLモデルロード失敗: \(error)")
         }
@@ -19,7 +19,7 @@ class MLModelManager {
         guard let model = model else { return nil }
 
         do {
-            let input = _20260611_01_Best_hybrid_model_epoch90Input(audioFeatures: features)
+            let input = _20260703_225631_hybrid_Best_model_epoch53Input(audioFeatures: features)
             let output = try model.prediction(input: input)
 
             // デバッグ用
@@ -29,8 +29,8 @@ class MLModelManager {
             var maxIndex = 0
 
             for i in 0..<8 {
-                let logProb = output.directionProbabilities[i].floatValue
-                let prob = exp(logProb) * 100.0
+                // Core ML変換時点でlog_softmax出力をexp済みなので、ここでは百分率への変換だけを行う。
+                let prob = output.directionProbabilities[i].floatValue * 100.0
 
                 // print("Class \(i): \(prob)%")
 

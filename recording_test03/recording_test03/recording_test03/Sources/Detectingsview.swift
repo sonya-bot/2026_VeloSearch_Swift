@@ -35,16 +35,38 @@ enum DetectionState {
     }
 }
 
+enum LocalizationState: String {
+    case listeningForBeep
+    case waitingAfterBeep
+    case collectingAudio
+    case predicting
+}
+
 // MARK: - 1. Detecting (検知ロジック)
 @Observable
 class Detection {
     private let audioEngine = AVAudioEngine()
     private var audioFile: AVAudioFile?
+    private var beepPlayer: AVAudioPlayer?
+    private var beepPlaybackTask: Task<Void, Never>?
+    // Core MLの特徴量抽出は44.1kHz / stereo / Float32を前提にしている。
+    private let targetFormat = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32,
+        sampleRate: 44100,
+        channels: 2,
+        interleaved: false
+    )!
     
     private let featureExtractor = AudioFeatureExtractor()
     private let mlManager = MLModelManager()
+    private let beepDetector = BeepDetector()
+    private let featureExtractionQueue = DispatchQueue(
+        label: "dev.tuist.recording-test03.feature-extraction",
+        qos: .userInitiated
+    )
     
     var isRecording = false
+    var isBeepPlaying = false
     var state: DetectionState = .standby
     var elapsedTime: TimeInterval = 0.0
     var currentDecibel: Float = -160.0
@@ -59,14 +81,72 @@ class Detection {
     var debugPredictExecuted: Bool = false
     var debugPredictSuccess: Bool = false
     var debugMessage: String = ""
+    var debugLastUpdateMs: Double = 0.0
+    var debugFeatureSkipCount: Int = 0
+    var debugPredictionSkipCount: Int = 0
+    var debugBeepDetectedCount: Int = 0
+    var debugBeepDetectedThisFrame: Bool = false
+    var debugLocalizationState: String = LocalizationState.listeningForBeep.rawValue
+    var debugLastBeepElapsedTime: Double = 0.0
+    var debugBeepToPredictionMs: Double = 0.0
     
     private var timer: Timer?
     private var startTime: Date?
     private var speedcsvTimer: Timer?
     private var speedcsvData: [String] = []
+    private var devcsvData: [String] = []
     private var currentBaseFileName: String = ""
     private var currentOrientation: String = "横"
     private var currentMicSource: String = "背面"
+    private let featureExtractionLock = NSLock()
+    private var isExtractingFeatures = false
+    private let predictionLock = NSLock()
+    private var isPredicting = false
+    private var lastPredictionSuccessTime: Date?
+    // ビープ音そのものを定位対象にするため、検知後の待機は入れない。
+    private let localizationDelaySeconds: TimeInterval = 0.0
+    private let preRollSamples: Int = 22050
+    private var preRollL: [Float] = []
+    private var preRollR: [Float] = []
+    private var localizationState: LocalizationState = .listeningForBeep
+    private var beepDetectedAt: Date?
+
+    func playBeepSound() {
+        guard isRecording else {
+            print("Detect録音中のみBeep Testを再生できます")
+            return
+        }
+
+        guard let soundURL = Bundle.main.url(forResource: "beep", withExtension: "wav") else {
+            print("beep.wav が見つかりません")
+            return
+        }
+
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            // Beep TestもMonitoring画面と同じ再生ルートを明示し、端末スピーカーから出力する。
+            try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
+            try audioSession.setActive(true)
+            try configureInputSession(audioSession, orientation: currentOrientation, micSource: currentMicSource)
+
+            beepPlayer = try AVAudioPlayer(contentsOf: soundURL)
+            beepPlayer?.prepareToPlay()
+            beepPlayer?.play()
+            isBeepPlaying = true
+
+            let duration = beepPlayer?.duration ?? 0.0
+            beepPlaybackTask?.cancel()
+            beepPlaybackTask = Task { @MainActor [weak self] in
+                let nanoseconds = UInt64(max(duration, 0.0) * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanoseconds)
+                guard !Task.isCancelled else { return }
+                self?.isBeepPlaying = false
+            }
+        } catch {
+            isBeepPlaying = false
+            print("beep.wav の再生に失敗しました: \(error.localizedDescription)")
+        }
+    }
     
     func startDetecting(locationManager: LocationManager, orientation: String, micSource: String) {
         self.currentOrientation = orientation
@@ -84,33 +164,37 @@ class Detection {
         let audioFilename = documentPath.appendingPathComponent("\(self.currentBaseFileName).wav")
         
         do {
-            try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
+            try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
+            try audioSession.setPreferredSampleRate(targetFormat.sampleRate)
+            if audioSession.maximumInputNumberOfChannels >= targetFormat.channelCount {
+                try audioSession.setPreferredInputNumberOfChannels(Int(targetFormat.channelCount))
+            }
             try audioSession.setActive(true)
+            try configureInputSession(audioSession, orientation: orientation, micSource: micSource)
             
             let inputNode = audioEngine.inputNode
             let inputFormat = inputNode.inputFormat(forBus: 0)
+            guard let audioConverter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
+                print("Audio Converter作成失敗: \(inputFormat) -> \(targetFormat)")
+                return
+            }
             
-            audioFile = try AVAudioFile(forWriting: audioFilename, settings: inputFormat.settings)
+            audioFile = try AVAudioFile(forWriting: audioFilename, settings: targetFormat.settings)
             
             inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] (buffer, time) in
                 guard let self = self else { return }
-                do { try self.audioFile?.write(from: buffer) } catch { print("WAV Error") }
-                
-                self.calculateDecibel(buffer: buffer)
-                
-                // 特徴量抽出と推論
-                self.debugBufferCount = self.featureExtractor.currentBufferCount
-
-                if let features = self.featureExtractor.appendAndExtract(buffer: buffer) {
-
-                    self.debugFeatureCreated = true
-                    self.executeAI(features: features)
-
-                } else {
-
-                    self.debugFeatureCreated = false
-
+                guard let convertedBuffer = self.convertBuffer(
+                    buffer,
+                    converter: audioConverter,
+                    targetFormat: self.targetFormat
+                ) else {
+                    return
                 }
+
+                do { try self.audioFile?.write(from: convertedBuffer) } catch { print("WAV Error") }
+                
+                self.calculateDecibel(buffer: convertedBuffer)
+                self.handleLocalizationAudio(buffer: convertedBuffer, at: Date())
             }
             
             audioEngine.prepare()
@@ -120,9 +204,17 @@ class Detection {
             state = .safe
             elapsedTime = 0.0
             startTime = Date()
+            featureExtractor.reset()
+            beepDetector.reset()
+            resetPreRollBuffer()
+            setLocalizationState(.listeningForBeep)
+            resetDebugMetrics()
             
             speedcsvData = [
             "elapsed_time,speed_kmh,volume_db,status,ai_angle,ai_probability,ground_truth_angle,device_orientation,mic_source,buffer_count,feature_created,predict_executed,predict_success"
+            ]
+            devcsvData = [
+                "elapsed_time,speed_kmh,volume_db,status,ai_angle,ai_probability,ground_truth_angle,device_orientation,mic_source,update_ms,feature_skip_count,prediction_skip_count,beep_detected_count,beep_detected_this_frame,last_beep_elapsed_time,beep_to_prediction_ms,localization_state,buffer_count,feature_created,predict_executed,predict_success,debug_message"
             ]
             
             timer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] _ in
@@ -131,11 +223,184 @@ class Detection {
             }
             speedcsvTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                 self?.recordCSVLog(locationManager: locationManager)
+                self?.recordDevCSVLog(locationManager: locationManager)
             }
             
         } catch {
             print("録音開始失敗: \(error)")
         }
+    }
+
+    private func configureInputSession(
+        _ audioSession: AVAudioSession,
+        orientation: String,
+        micSource: String
+    ) throws {
+        // Monitoring画面と同じ条件で録音するため、内蔵マイクの面とステレオ指向性を明示する。
+        if let availableInputs = audioSession.availableInputs,
+           let builtInMic = availableInputs.first(where: { $0.portType == .builtInMic }),
+           let dataSources = builtInMic.dataSources {
+            let targetOrientation: AVAudioSession.Orientation = (micSource == "背面") ? .back : .front
+
+            if let selectedDataSource = dataSources.first(where: { $0.orientation == targetOrientation }) {
+                try builtInMic.setPreferredDataSource(selectedDataSource)
+
+                if let supportedPatterns = selectedDataSource.supportedPolarPatterns,
+                   supportedPatterns.contains(.stereo) {
+                    try selectedDataSource.setPreferredPolarPattern(.stereo)
+                    print("ステレオ入力を適用しました")
+                } else {
+                    print("このマイクはステレオ入力をサポートしていません")
+                }
+
+                try audioSession.setPreferredInput(builtInMic)
+                print("マイク設定: \(micSource) を選択")
+            }
+        }
+
+        // 端末向きはマイク選択後に反映する。順序はMonitoring画面と揃える。
+        if orientation == "縦" {
+            try audioSession.setPreferredInputOrientation(.portrait)
+        } else {
+            try audioSession.setPreferredInputOrientation(.landscapeRight)
+        }
+    }
+
+    private func convertBuffer(
+        _ buffer: AVAudioPCMBuffer,
+        converter: AVAudioConverter,
+        targetFormat: AVAudioFormat
+    ) -> AVAudioPCMBuffer? {
+        let inputSampleRate = buffer.format.sampleRate
+        guard inputSampleRate > 0 else { return nil }
+
+        let sampleRateRatio = targetFormat.sampleRate / inputSampleRate
+        let outputCapacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * sampleRateRatio)) + 1024
+        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputCapacity) else {
+            return nil
+        }
+
+        var didProvideInput = false
+        var conversionError: NSError?
+
+        // 1つのtap bufferにつき入力は一度だけ供給する。返し続けると変換が不正になる。
+        let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
+            if didProvideInput {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+
+            didProvideInput = true
+            outStatus.pointee = .haveData
+            return buffer
+        }
+
+        if status == .error {
+            if let conversionError {
+                print("Audio Converter変換失敗: \(conversionError.localizedDescription)")
+            }
+            return nil
+        }
+
+        return outputBuffer.frameLength > 0 ? outputBuffer : nil
+    }
+
+    private func handleLocalizationAudio(buffer: AVAudioPCMBuffer, at time: Date) {
+        appendPreRoll(buffer: buffer)
+
+        switch localizationState {
+        case .listeningForBeep:
+            guard beepDetector.detect(buffer: buffer, at: time) else { return }
+
+            featureExtractor.reset()
+            beepDetectedAt = time
+            debugBeepDetectedCount += 1
+            debugBeepDetectedThisFrame = true
+            debugLastBeepElapsedTime = elapsedTime
+            debugMessage = "Beep detected"
+            setLocalizationState(.waitingAfterBeep)
+
+            if localizationDelaySeconds <= 0 {
+                debugMessage = "Collecting localization audio"
+                setLocalizationState(.collectingAudio)
+                let preRoll = currentPreRollSamples()
+                featureExtractor.append(samplesL: preRoll.left, samplesR: preRoll.right)
+                requestFeatureExtraction()
+            }
+
+        case .waitingAfterBeep:
+            guard let beepDetectedAt else {
+                setLocalizationState(.listeningForBeep)
+                return
+            }
+
+            guard time.timeIntervalSince(beepDetectedAt) >= localizationDelaySeconds else { return }
+
+            featureExtractor.reset()
+            debugMessage = "Collecting localization audio"
+            setLocalizationState(.collectingAudio)
+            featureExtractor.append(buffer: buffer)
+            requestFeatureExtraction()
+
+        case .collectingAudio:
+            featureExtractor.append(buffer: buffer)
+            requestFeatureExtraction()
+
+        case .predicting:
+            return
+        }
+    }
+
+    private func setLocalizationState(_ state: LocalizationState) {
+        localizationState = state
+        debugLocalizationState = state.rawValue
+    }
+
+    private func requestFeatureExtraction() {
+        guard startFeatureExtractionIfIdle() else {
+            DispatchQueue.main.async {
+                self.debugFeatureSkipCount += 1
+                self.debugMessage = "Feature extraction skipped: previous extraction is still running"
+            }
+            return
+        }
+
+        featureExtractionQueue.async { [weak self] in
+            guard let self = self else { return }
+            defer {
+                self.finishFeatureExtraction()
+            }
+
+            let features = self.featureExtractor.extractIfReady()
+            let currentBufferCount = self.featureExtractor.currentBufferCount
+
+            DispatchQueue.main.async {
+                self.debugBufferCount = currentBufferCount
+                self.debugFeatureCreated = features != nil
+            }
+
+            guard let features else { return }
+            self.setLocalizationState(.predicting)
+            self.executeAI(features: features)
+        }
+    }
+
+    private func startFeatureExtractionIfIdle() -> Bool {
+        featureExtractionLock.lock()
+        defer { featureExtractionLock.unlock() }
+
+        if isExtractingFeatures {
+            return false
+        }
+
+        isExtractingFeatures = true
+        return true
+    }
+
+    private func finishFeatureExtraction() {
+        featureExtractionLock.lock()
+        isExtractingFeatures = false
+        featureExtractionLock.unlock()
     }
     
     func stopDetecting() {
@@ -148,15 +413,79 @@ class Detection {
         timer?.invalidate()
         speedcsvTimer?.invalidate()
         savespeedCSV()
+        saveDevCSV()
+        featureExtractor.reset()
+        beepDetector.reset()
+        resetPreRollBuffer()
+        beepDetectedAt = nil
+        setLocalizationState(.listeningForBeep)
+        resetDetectionDisplay()
+    }
+
+    private func appendPreRoll(buffer: AVAudioPCMBuffer) {
+        guard let channelData = buffer.floatChannelData else { return }
+
+        let frameLength = Int(buffer.frameLength)
+        let ptrL = channelData[0]
+        let ptrR = buffer.format.channelCount > 1 ? channelData[1] : channelData[0]
+
+        preRollL.append(contentsOf: UnsafeBufferPointer(start: ptrL, count: frameLength))
+        preRollR.append(contentsOf: UnsafeBufferPointer(start: ptrR, count: frameLength))
+
+        if preRollL.count > preRollSamples {
+            let removeCount = preRollL.count - preRollSamples
+            preRollL.removeFirst(removeCount)
+            preRollR.removeFirst(min(removeCount, preRollR.count))
+        }
+    }
+
+    private func currentPreRollSamples() -> (left: [Float], right: [Float]) {
+        let count = min(preRollL.count, preRollR.count)
+        guard count > 0 else { return ([], []) }
+
+        return (
+            Array(preRollL.suffix(count)),
+            Array(preRollR.suffix(count))
+        )
+    }
+
+    private func resetPreRollBuffer() {
+        preRollL.removeAll(keepingCapacity: true)
+        preRollR.removeAll(keepingCapacity: true)
     }
     
     private func executeAI(features: MLMultiArray) {
-        debugPredictExecuted = true
+        guard startPredictionIfIdle() else {
+            Task { @MainActor in
+                self.debugPredictionSkipCount += 1
+                self.debugPredictExecuted = false
+                self.debugMessage = "Prediction skipped: previous inference is still running"
+            }
+            return
+        }
+
+        Task { @MainActor in
+            self.debugPredictExecuted = true
+        }
         Task.detached { [weak self] in
             guard let self = self else { return }
+            defer {
+                self.finishPrediction()
+            }
+
             if let result = self.mlManager.predict(features: features) {
                 Task { @MainActor in
+                    guard self.isRecording else { return }
+
+                    let now = Date()
+                    if let lastPredictionSuccessTime = self.lastPredictionSuccessTime {
+                        self.debugLastUpdateMs = now.timeIntervalSince(lastPredictionSuccessTime) * 1000.0
+                    }
+                    self.lastPredictionSuccessTime = now
                     self.debugPredictSuccess = true
+                    if let beepDetectedAt = self.beepDetectedAt {
+                        self.debugBeepToPredictionMs = now.timeIntervalSince(beepDetectedAt) * 1000.0
+                    }
 
                     self.currentAIAngle = result.angle
                     self.currentAIProbability = result.probability
@@ -165,13 +494,64 @@ class Detection {
                         result.probability >= self.mlManager.detectionThreshold
                         ? .detect
                         : .safe
+                    self.featureExtractor.reset()
+                    self.beepDetectedAt = nil
+                    self.setLocalizationState(.listeningForBeep)
                 }
             } else {
                 Task { @MainActor in
+                    guard self.isRecording else { return }
                     self.debugPredictSuccess = false
+                    self.featureExtractor.reset()
+                    self.beepDetectedAt = nil
+                    self.setLocalizationState(.listeningForBeep)
                 }
             }
         }
+    }
+
+    private func startPredictionIfIdle() -> Bool {
+        predictionLock.lock()
+        defer { predictionLock.unlock() }
+
+        if isPredicting {
+            return false
+        }
+
+        isPredicting = true
+        return true
+    }
+
+    private func finishPrediction() {
+        predictionLock.lock()
+        isPredicting = false
+        predictionLock.unlock()
+    }
+
+    private func resetDebugMetrics() {
+        debugBufferCount = 0
+        debugFeatureCreated = false
+        debugPredictExecuted = false
+        debugPredictSuccess = false
+        debugMessage = ""
+        debugLastUpdateMs = 0.0
+        debugFeatureSkipCount = 0
+        debugPredictionSkipCount = 0
+        debugBeepDetectedCount = 0
+        debugBeepDetectedThisFrame = false
+        debugLocalizationState = LocalizationState.listeningForBeep.rawValue
+        debugLastBeepElapsedTime = 0.0
+        debugBeepToPredictionMs = 0.0
+        lastPredictionSuccessTime = nil
+    }
+
+    private func resetDetectionDisplay() {
+        elapsedTime = 0.0
+        currentDecibel = -160.0
+        currentAIAngle = 0
+        currentAIProbability = 0.0
+        currentGroundTruth = "FalseDetect"
+        resetDebugMetrics()
     }
     
     private func calculateDecibel(buffer: AVAudioPCMBuffer) {
@@ -207,17 +587,65 @@ class Detection {
 
         speedcsvData.append(logLine)
     }
+
+    private func recordDevCSVLog(locationManager: LocationManager) {
+        let speed = locationManager.speed * 3.6
+
+        let logLine = String(
+            format: "%.2f,%.1f,%.1f,%@,%d,%.1f,%@,%@,%@,%.1f,%d,%d,%d,%@,%.2f,%.1f,%@,%d,%@,%@,%@,%@",
+            elapsedTime,
+            speed,
+            currentDecibel,
+            state.title,
+            currentAIAngle,
+            currentAIProbability,
+            currentGroundTruth,
+            currentOrientation,
+            currentMicSource,
+            debugLastUpdateMs,
+            debugFeatureSkipCount,
+            debugPredictionSkipCount,
+            debugBeepDetectedCount,
+            debugBeepDetectedThisFrame.description,
+            debugLastBeepElapsedTime,
+            debugBeepToPredictionMs,
+            debugLocalizationState,
+            debugBufferCount,
+            debugFeatureCreated.description,
+            debugPredictExecuted.description,
+            debugPredictSuccess.description,
+            csvEscaped(debugMessage)
+        )
+
+        devcsvData.append(logLine)
+        // 0.1秒ごとのCSV行でビープ発生タイミングを1回だけ示す。
+        debugBeepDetectedThisFrame = false
+    }
     
     private func getNextSequenceNumber(dateString: String, in directory: URL) -> Int {
         do {
             let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-            return files.filter { $0.lastPathComponent.hasPrefix("Detecting_\(dateString)") }.count + 1
+            // 1回のDetectでWAV/CSV/Dev CSVが生成されるため、連番は録音WAVだけを基準にする。
+            let dailyFiles = files.filter {
+                $0.lastPathComponent.hasPrefix("Detecting_\(dateString)") && $0.pathExtension == "wav"
+            }
+            return dailyFiles.count + 1
         } catch { return 1 }
     }
     
     private func savespeedCSV() {
         let path = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("\(currentBaseFileName).csv")
         do { try speedcsvData.joined(separator: "\n").write(to: path, atomically: true, encoding: .utf8) } catch { print("CSV Error") }
+    }
+
+    private func saveDevCSV() {
+        let path = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Dev_\(currentBaseFileName).csv")
+        do { try devcsvData.joined(separator: "\n").write(to: path, atomically: true, encoding: .utf8) } catch { print("Dev CSV Error") }
+    }
+
+    private func csvEscaped(_ value: String) -> String {
+        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        return "\"\(escaped)\""
     }
 }
 
@@ -228,6 +656,7 @@ struct DetectingsView: View {
     @AppStorage("warningSoundID") private var selectedSoundID: Int = 1052
     @AppStorage("deviceOrientation") private var selectedOrientation: String = "横"
     @AppStorage("micSource") private var selectedMicSource: String = "背面"
+    @AppStorage("showDebugOverlay") private var showDebugOverlay = false
     
     // 正解入力ピッカーの選択肢
     let truthOptions = ["FalseDetect", "0°", "45°", "90°", "135°", "180°", "225°", "270°", "315°"]
@@ -248,7 +677,7 @@ struct DetectingsView: View {
                             Spacer(minLength: 0)
                             statusView
                                 .padding(.bottom, 10)
-                            radarSection
+                            radarSection(isLandscape: isLandscape)
                             Spacer(minLength: 0)
                         }
                         .frame(width: (geometry.size.width - 30) / 3)
@@ -259,8 +688,10 @@ struct DetectingsView: View {
                             micAssignmentLabels
                                 .padding(.top, -20)
                             groundTruthPicker
-                            controlButton
-                                .padding(.bottom, 8)
+                            HStack(spacing: 16) {
+                                controlButton
+                                beepButton
+                            }
                             Spacer(minLength: 0)
                         }
                         .frame(width: (geometry.size.width - 30) * 2 / 3)
@@ -271,12 +702,15 @@ struct DetectingsView: View {
                         statusView
                         micAssignmentLabels
                         Spacer(minLength: 0)
-                        radarSection
+                        radarSection(isLandscape: isLandscape)
                         Spacer(minLength: 0)
                         groundTruthPicker
                             .padding(.bottom, 16)
-                        controlButton
-                            .padding(.bottom, 16)
+                        HStack(spacing: 0) {
+                            controlButton
+                            beepButton
+                        }
+                        .padding(.bottom, 16)
                     }
                 }
                 }
@@ -305,10 +739,30 @@ struct DetectingsView: View {
             .padding(.top, 10)
     }
 
-    private var radarSection: some View {
+    private func radarSection(isLandscape: Bool) -> some View {
         RadarView(state: detection.state, aiAngle: detection.currentAIAngle)
             .aspectRatio(1, contentMode: .fit)
             .frame(maxWidth: 220, maxHeight: 220)
+            .overlay(alignment: .bottomTrailing) {
+                if showDebugOverlay {
+                    debugOverlay(isLandscape: isLandscape)
+                }
+            }
+    }
+
+    private func debugOverlay(isLandscape: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("AI: \(detection.currentAIAngle)deg / \(Int(detection.currentAIProbability))%")
+            Text("Update: \(Int(detection.debugLastUpdateMs))ms")
+            Text("Skipped: Extract \(detection.debugFeatureSkipCount) / AI \(detection.debugPredictionSkipCount)")
+        }
+        .font(.system(size: 12, weight: .medium, design: .monospaced))
+        .foregroundStyle(.primary)
+//        .padding(.horizontal, 6)
+//        .padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(.systemBackground).opacity(0.82)))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25), lineWidth: 0.5))
+        .offset(x: isLandscape ? -50 : 80, y: 20)
     }
 
     // マイクの割り当て表示
@@ -398,6 +852,26 @@ struct DetectingsView: View {
         }
         .padding(.horizontal, 24)
         .sensoryFeedback(.impact(flexibility: .solid), trigger: detection.isRecording)
+    }
+    
+    private var beepButton: some View {
+        Button(action: {
+            detection.playBeepSound()
+        }) {
+            Text(detection.isBeepPlaying ? "Playing" : "Beep Test")
+                .font(.title2).bold().foregroundStyle(.white)
+                .frame(maxWidth: .infinity).padding(.vertical, 14)
+                .background(Color.orange.opacity(beepButtonOpacity))
+                .clipShape(Capsule())
+        }
+        .padding(.horizontal, 24)
+        .disabled(!detection.isRecording || detection.isBeepPlaying)
+    }
+
+    private var beepButtonOpacity: Double {
+        if !detection.isRecording { return 0.25 }
+        if detection.isBeepPlaying { return 0.45 }
+        return 1.0
     }
 }
 

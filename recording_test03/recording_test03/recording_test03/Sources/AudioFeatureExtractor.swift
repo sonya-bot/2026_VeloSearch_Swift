@@ -8,13 +8,19 @@ class AudioFeatureExtractor {
     private let nFft: Int = 1024
     private let hopLength: Int = 512
     private let nMels: Int = 64
-    private let targetFrames: Int = 349
-    private let requiredSamples: Int = 179200
+    private let targetFrames: Int = 173
+    // Python学習時は2.0秒波形に torch.stft(center=True, pad_mode="reflect") を適用して173フレームを作る。
+    private let requiredSamples: Int = 88200
+    private let stepSamples: Int = 11025
     
     private var bufferL: [Float] = []
     private var bufferR: [Float] = []
+    private var samplesSinceLastExtraction: Int = 0
+    private let bufferLock = NSLock()
     
     var currentBufferCount: Int {
+        bufferLock.lock()
+        defer { bufferLock.unlock() }
         return bufferL.count
     }
     
@@ -65,32 +71,77 @@ class AudioFeatureExtractor {
         print("Melフィルター (64 x 513) のロード完了")
     }
     
-    func appendAndExtract(buffer: AVAudioPCMBuffer) -> MLMultiArray? {
-        guard let channelData = buffer.floatChannelData else { return nil }
+    func append(buffer: AVAudioPCMBuffer) {
+        guard let channelData = buffer.floatChannelData else { return }
         let frameLength = Int(buffer.frameLength)
         
         let ptrL = channelData[0]
         let ptrR = buffer.format.channelCount > 1 ? channelData[1] : channelData[0]
-        
-        bufferL.append(contentsOf: UnsafeBufferPointer(start: ptrL, count: frameLength))
-        bufferR.append(contentsOf: UnsafeBufferPointer(start: ptrR, count: frameLength))
-        
-        if bufferL.count >= requiredSamples {
-            let processL = Array(bufferL.prefix(requiredSamples))
-            let processR = Array(bufferR.prefix(requiredSamples))
-            
-            // バッファをクリア（※オーバーラップさせたい場合は suffix 等を残す）
-            bufferL.removeAll(keepingCapacity: true)
-            bufferR.removeAll(keepingCapacity: true)
-            
-            return processFeatures(pcmL: processL, pcmR: processR)
+
+        let samplesL = Array(UnsafeBufferPointer(start: ptrL, count: frameLength))
+        let samplesR = Array(UnsafeBufferPointer(start: ptrR, count: frameLength))
+
+        append(samplesL: samplesL, samplesR: samplesR)
+    }
+
+    func append(samplesL: [Float], samplesR: [Float]) {
+        guard !samplesL.isEmpty, !samplesR.isEmpty else { return }
+
+        bufferLock.lock()
+        bufferL.append(contentsOf: samplesL)
+        bufferR.append(contentsOf: samplesR)
+        samplesSinceLastExtraction += min(samplesL.count, samplesR.count)
+
+        let maxBufferedSamples = requiredSamples + (stepSamples * 4)
+        if bufferL.count > maxBufferedSamples {
+            let removeCount = bufferL.count - maxBufferedSamples
+            bufferL.removeFirst(removeCount)
+            bufferR.removeFirst(min(removeCount, bufferR.count))
         }
-        return nil
+        bufferLock.unlock()
+    }
+
+    func reset() {
+        bufferLock.lock()
+        bufferL.removeAll(keepingCapacity: true)
+        bufferR.removeAll(keepingCapacity: true)
+        samplesSinceLastExtraction = 0
+        bufferLock.unlock()
+    }
+
+    func extractIfReady() -> MLMultiArray? {
+        let processL: [Float]
+        let processR: [Float]
+
+        bufferLock.lock()
+        let hasEnoughSamples = bufferL.count >= requiredSamples && bufferR.count >= requiredSamples
+        let reachedStep = samplesSinceLastExtraction >= stepSamples
+
+        guard hasEnoughSamples && reachedStep else {
+            bufferLock.unlock()
+            return nil
+        }
+
+        // 処理が遅れた場合は古い窓を追わず、常に直近2秒相当の音声を使う。
+        processL = Array(bufferL.suffix(requiredSamples))
+        processR = Array(bufferR.suffix(requiredSamples))
+        samplesSinceLastExtraction = 0
+
+        if bufferL.count > requiredSamples {
+            let removeCount = bufferL.count - requiredSamples
+            bufferL.removeFirst(removeCount)
+            bufferR.removeFirst(min(removeCount, bufferR.count))
+        }
+        bufferLock.unlock()
+
+        return processFeatures(pcmL: processL, pcmR: processR)
     }
     
     private func processFeatures(pcmL: [Float], pcmR: [Float]) -> MLMultiArray? {
         guard let setup = fftSetup else { return nil }
         let nStft = nFft / 2 + 1 // 513
+        let paddedL = reflectPadCenter(pcmL, padding: nFft / 2)
+        let paddedR = reflectPadCenter(pcmR, padding: nFft / 2)
         
         // 結果格納用の配列 [CH][Mel][Frame]
         var logMelL = Array(repeating: Array(repeating: Float(0), count: targetFrames), count: nMels)
@@ -104,27 +155,28 @@ class AudioFeatureExtractor {
         var imagL = [Float](repeating: 0, count: nFft)
         var realR = [Float](repeating: 0, count: nFft)
         var imagR = [Float](repeating: 0, count: nFft)
-        var sumIld: Float = 0
-        var sqSumIld: Float = 0
+        var inputImagL = [Float](repeating: 0, count: nFft)
+        var inputImagR = [Float](repeating: 0, count: nFft)
         
         // 1. フレーム単位での STFT 実行
         for t in 0..<targetFrames {
             let start = t * hopLength
             let end = start + nFft
             // 安全装置（配列外アクセス防止）
-            guard end <= pcmL.count else { break }
+            guard end <= paddedL.count else { break }
             
             var windowedL = [Float](repeating: 0, count: nFft)
             var windowedR = [Float](repeating: 0, count: nFft)
             
             // 窓関数適用
-            vDSP_vmul(Array(pcmL[start..<end]), 1, window, 1, &windowedL, 1, vDSP_Length(nFft))
-            vDSP_vmul(Array(pcmR[start..<end]), 1, window, 1, &windowedR, 1, vDSP_Length(nFft))
+            vDSP_vmul(Array(paddedL[start..<end]), 1, window, 1, &windowedL, 1, vDSP_Length(nFft))
+            vDSP_vmul(Array(paddedR[start..<end]), 1, window, 1, &windowedR, 1, vDSP_Length(nFft))
             
             // FFT実行
-            var inputImag = [Float](repeating: 0, count: nFft)
-            vDSP_DFT_Execute(setup, &windowedL, &inputImag, &realL, &imagL)
-            vDSP_DFT_Execute(setup, &windowedR, &inputImag, &realR, &imagR)
+            // var inputImag = [Float](repeating: 0, count: nFft)
+            vDSP_DFT_Execute(setup, &windowedL, &inputImagL, &realL, &imagL)
+
+            vDSP_DFT_Execute(setup, &windowedR, &inputImagR, &realR, &imagR)
             
             var powerL = [Float](repeating: 0, count: nStft)
             var powerR = [Float](repeating: 0, count: nStft)
@@ -195,10 +247,6 @@ class AudioFeatureExtractor {
                 sumR += vR; sqSumR += vR*vR
                 eSum += vL
 
-                // ILDの正規化
-                let vIld = ild[m][t]
-                sumIld += vIld
-                sqSumIld += vIld * vIld
             }
             let avgEnergy = eSum / Float(nMels)
             frameEnergies[t] = avgEnergy
@@ -209,9 +257,6 @@ class AudioFeatureExtractor {
         let meanAll = (sumL + sumR) / (totalElements * 2)
         let variance = ((sqSumL + sqSumR) / (totalElements * 2)) - (meanAll * meanAll)
         let stdAll = sqrt(max(variance, 0)) + 1e-6
-        let meanIld = sumIld / totalElements
-        let varianceIld = (sqSumIld / totalElements) - meanIld * meanIld
-        let stdIld = sqrt(max(varianceIld, 0)) + 1e-6
         
         let threshold = maxEnergy - 25.0
 
@@ -221,7 +266,7 @@ class AudioFeatureExtractor {
 
             do {
                 return try MLMultiArray(
-                    shape: [1, 5, 64, 349] as [NSNumber],
+                    shape: [1, 5, 64, 173] as [NSNumber],
                     dataType: .float16
                 )
             } catch {
@@ -252,8 +297,8 @@ class AudioFeatureExtractor {
 
         // 4. 最終テンソルへの書き込み
         do {
-            // [1, 5, 64, 349] の MLMultiArray 作成 (Float16)
-            let multiArray = try MLMultiArray(shape: [1, 5, 64, 349] as [NSNumber], dataType: .float16)
+            // [1, 5, 64, 173] の MLMultiArray 作成 (Float16)
+            let multiArray = try MLMultiArray(shape: [1, 5, 64, 173] as [NSNumber], dataType: .float16)
             
             for m in 0..<nMels {
                 for t in 0..<targetFrames {
@@ -266,15 +311,15 @@ class AudioFeatureExtractor {
                     // マスキング適用
                     let outCos = isSilence ? 0.0 : cosIpd[m][t]
                     let outSin = isSilence ? 0.0 : sinIpd[m][t]
-                    let normIld = stdIld < 1e-4 ? 0 : (ild[m][t] - meanIld) / stdIld
-                    let outIld = isSilence ? 0 : normIld
+                    // Python v3の学習時前処理に合わせ、ILDは無音マスクせずglobal_stdで割る。
+                    let normIld = ild[m][t] / stdAll
                     
                     // MLMultiArray への代入 [1(0), CH, Mel, Frame]
                     multiArray[[0, 0, m, t] as [NSNumber]] = NSNumber(value: normL)
                     multiArray[[0, 1, m, t] as [NSNumber]] = NSNumber(value: normR)
                     multiArray[[0, 2, m, t] as [NSNumber]] = NSNumber(value: outCos)
                     multiArray[[0, 3, m, t] as [NSNumber]] = NSNumber(value: outSin)
-                    multiArray[[0, 4, m, t] as [NSNumber]] = NSNumber(value: outIld)
+                    multiArray[[0, 4, m, t] as [NSNumber]] = NSNumber(value: normIld)
                 }
             }
             return multiArray
@@ -282,5 +327,25 @@ class AudioFeatureExtractor {
             print("MLMultiArray展開エラー: \(error)")
             return nil
         }
+    }
+
+    private func reflectPadCenter(_ samples: [Float], padding: Int) -> [Float] {
+        guard padding > 0, samples.count > padding else { return samples }
+
+        var padded = [Float]()
+        padded.reserveCapacity(samples.count + (padding * 2))
+
+        // torch.stft(center=True) の reflect padding は端点を含めずに反射する。
+        for index in stride(from: padding, through: 1, by: -1) {
+            padded.append(samples[index])
+        }
+        padded.append(contentsOf: samples)
+
+        let lastIndex = samples.count - 1
+        for offset in 1...padding {
+            padded.append(samples[lastIndex - offset])
+        }
+
+        return padded
     }
 }
