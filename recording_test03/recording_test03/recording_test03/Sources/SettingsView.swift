@@ -205,6 +205,7 @@ struct SettingsView: View {
         }
       }
       .navigationTitle("Settings")
+      .navigationBarTitleDisplayMode(.inline)
     }
   }
 }
@@ -263,18 +264,9 @@ struct DeveloperSettingsView: View {
   }
 
   private func loadDevCSVFiles() {
-    let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    let csvURLs =
-      (try? FileManager.default.contentsOfDirectory(
-        at: documentsURL,
-        includingPropertiesForKeys: [.contentModificationDateKey]
-      )) ?? []
-
-    // 通常CSVと混在させないため、デバッグ用の命名規則だけを一覧対象にする。
-    devCSVFiles = csvURLs
-      .filter { url in
-        url.pathExtension.lowercased() == "csv" && url.lastPathComponent.hasPrefix("Dev_")
-      }
+    try? RecordingFileStore.shared.prepareStorage()
+    // Defaultと各Sceneに保存されたDev CSVを同じ一覧で確認できるようにする。
+    devCSVFiles = RecordingFileStore.shared.allDevCSVFiles()
       .sorted { lhs, rhs in
         modificationDate(for: lhs) > modificationDate(for: rhs)
       }

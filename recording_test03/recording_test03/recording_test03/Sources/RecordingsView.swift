@@ -14,9 +14,11 @@ struct RecordingsView_Previews: PreviewProvider {
 @Observable
 class AudioRecorder {
   var audioRecorder: AVAudioRecorder?
+  private var audioPlayer: AVAudioPlayer?
 
   var isRecording = false
   var elapsedTime: TimeInterval = 0.0
+  var measurementStatus: String = "待機中"
 
   // L/Rそれぞれの音量データ
   var leftDecibel: Float = 0.0
@@ -28,46 +30,59 @@ class AudioRecorder {
   private var levelTimer: Timer?
   private var startTime: Date?
   private var currentBaseFileName: String = ""
+  private var measurementTask: Task<Void, Never>?
 
   func startRecording(orientation: String, micSource: String, prefix: String = "Recording") {
     let audioSession = AVAudioSession.sharedInstance()
-    let fileManager = FileManager.default
-    let documentPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyyMMdd"
-    let dateString = formatter.string(from: Date())
-    let nextNumber = getNextSequenceNumber(dateString: dateString, prefix: prefix, in: documentPath)
-    self.currentBaseFileName = "\(prefix)_\(dateString)_\(String(format: "%02d", nextNumber))"  // 録音ファイルの接頭辞
-    let audioFilename = documentPath.appendingPathComponent("\(self.currentBaseFileName).wav")
+    let isMonitoringRecording = prefix == "Monitoring"
 
     do {
-      // オーディオセッションの設定
-      try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+      // 録音開始時点のSceneと連番を固定し、録音中の設定変更から保存先を切り離す。
+      let recordingFile = try RecordingFileStore.shared.makeRecordingURL(prefix: prefix)
+      self.currentBaseFileName = recordingFile.baseName
+      let audioFilename = recordingFile.url
+
+      measurementTask?.cancel()
+      audioPlayer?.stop()
+      audioPlayer = nil
+
+      // オーディオセッションの設定はMonitoringsViewと揃える。
+      try audioSession.setCategory(
+        .playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
       try audioSession.setActive(true)
+
+      if isMonitoringRecording {
+        let soundRawValue =
+          UserDefaults.standard.string(forKey: "selectedMonitoringSound")
+          ?? MonitoringSoundSource.sweep_5s.rawValue
+        let soundSource = MonitoringSoundSource(rawValue: soundRawValue) ?? .sweep_5s
+
+        if let soundUrl = Bundle.main.url(forResource: soundSource.fileName, withExtension: "wav") {
+          audioPlayer = try? AVAudioPlayer(contentsOf: soundUrl)
+          // 再生開始時の遅延を抑え、録音と再生の経路を開始前に確定させる。
+          audioPlayer?.prepareToPlay()
+        }
+      }
 
       // ハードウェアに入力を2チャンネル（ステレオ）として要求する
       if audioSession.maximumInputNumberOfChannels >= 2 {
         try audioSession.setPreferredInputNumberOfChannels(2)
       }
 
-      // 端末の向き設定を反映
-      if orientation == "縦" {
-        try audioSession.setPreferredInputOrientation(.portrait)
-      } else {
-        try audioSession.setPreferredInputOrientation(.landscapeRight)
-      }
-
-      // 録音マイク（前面/背面）の設定を反映
+      // 録音マイク（前面/背面）とステレオ設定
       if let availableInputs = audioSession.availableInputs,
         let builtInMic = availableInputs.first(where: { $0.portType == .builtInMic })
       {
-
         if let dataSources = builtInMic.dataSources {
           let targetOrientation: AVAudioSession.Orientation = (micSource == "背面") ? .back : .front
           if let selectedDataSource = dataSources.first(where: {
             $0.orientation == targetOrientation
           }) {
+
+            // 対象のマイク(前面/背面)をハードウェアにセット
+            try builtInMic.setPreferredDataSource(selectedDataSource)
+
+            // マイクのステレオ指向性をセット
             if let supportedPatterns = selectedDataSource.supportedPolarPatterns,
               supportedPatterns.contains(.stereo)
             {
@@ -77,11 +92,18 @@ class AudioRecorder {
               print("このマイクはステレオ入力をサポートしていません")
             }
 
-            try builtInMic.setPreferredDataSource(selectedDataSource)
+            // デバイス全体にこのマイク入力を適用
             try audioSession.setPreferredInput(builtInMic)
             print("マイク設定: \(micSource) を選択")
           }
         }
+      }
+
+      // 端末の向き設定を反映（必ずマイク設定の「後」に行う）
+      if orientation == "縦" {
+        try audioSession.setPreferredInputOrientation(.portrait)
+      } else {
+        try audioSession.setPreferredInputOrientation(.landscapeRight)
       }
 
       // 録音フォーマット設定（ステレオ 44.1kHz 16bit PCM）
@@ -99,11 +121,11 @@ class AudioRecorder {
       print("録音開始: \(audioFilename.lastPathComponent)")
       audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
       audioRecorder?.isMeteringEnabled = true
-      audioRecorder?.record()
 
       isRecording = true
       elapsedTime = 0.0
       startTime = Date()
+      measurementStatus = isMonitoringRecording ? "テスト音再生中" : "録音中"
 
       // 時間計測タイマー
       timer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] _ in
@@ -113,33 +135,43 @@ class AudioRecorder {
 
       startMonitoring()
 
+      if isMonitoringRecording {
+        // Monitoringは同じ録音設定で、開始直後にテスト音を再生し、再生終了後に自動停止する。
+        measurementTask = Task {
+          audioRecorder?.record()
+
+          let duration = audioPlayer?.duration ?? 0
+          audioPlayer?.play()
+
+          try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+          if Task.isCancelled { return }
+
+          await MainActor.run {
+            self.stopRecording()
+          }
+        }
+      } else {
+        audioRecorder?.record()
+      }
+
     } catch {
       print("エラー: \(error.localizedDescription)")
     }
   }
 
-  private func getNextSequenceNumber(dateString: String, prefix: String, in directory: URL) -> Int {
-    let fileManager = FileManager.default
-    do {
-      let files = try fileManager.contentsOfDirectory(
-        at: directory, includingPropertiesForKeys: nil)
-      let dailyFiles = files.filter {
-        $0.lastPathComponent.hasPrefix("\(prefix)_\(dateString)") && $0.pathExtension == "wav"
-      }
-      return dailyFiles.count + 1
-    } catch {
-      return 1
-    }
-  }
-
   func stopRecording() {
+    measurementTask?.cancel()
     audioRecorder?.stop()
+    audioPlayer?.stop()
     isRecording = false
     timer?.invalidate()
     levelTimer?.invalidate()
+    measurementStatus = "待機中"
     elapsedTime = 0.0
-    leftLevel = 0.01
-    rightLevel = 0.01
+    leftLevel = 0.0
+    rightLevel = 0.0
+    leftDecibel = 0.0
+    rightDecibel = 0.0
   }
 
   private func startMonitoring() {
@@ -172,6 +204,8 @@ struct RecordingsView: View {
 
   @AppStorage("deviceOrientation") private var selectedOrientation: String = "横"
   @AppStorage("micSource") private var selectedMicSource: String = "背面"
+  @AppStorage(RecordingFileStore.selectedSceneKey) private var selectedScene = RecordingFileStore.defaultSceneName
+  @State private var availableScenes: [String] = []
 
   var body: some View {
     NavigationStack {
@@ -182,24 +216,28 @@ struct RecordingsView: View {
         if verticalSizeClass == .compact {
           // 【横画面レイアウト】
           GeometryReader { geometry in
+            let bottomPadding = geometry.safeAreaInsets.bottom + 16
+            let meterWidth = min(220, max(160, geometry.size.width * 0.28))
+
             HStack(spacing: 30) {
               VStack(spacing: 10) {
                 timeDisplay
+                recordingStatus
                 Spacer()
                 recordButton
-                  .padding(.bottom, 100)
+                  .padding(.bottom, bottomPadding)
                 Spacer()
               }
               .frame(width: (geometry.size.width - 30) / 3)
 
               VStack(spacing: 10) {
                 micAssignmentLabels
-                  .padding(.top, -20)
-                // .padding(.bottom, 10)
-                horizontalStereoMeters
+                  .padding(.top, -12)
+                sceneDestinationPicker
+                horizontalStereoMeters(width: meterWidth, height: 24)
                 // Spacer()
               }
-              .padding(.bottom, 160)
+              .padding(.bottom, bottomPadding)
               .frame(width: (geometry.size.width - 30) * 2 / 3)
             }
             .frame(maxHeight: .infinity)
@@ -207,20 +245,29 @@ struct RecordingsView: View {
           .padding()
         } else {
           // 【縦画面レイアウト】
-          VStack(spacing: 20) {
-            Spacer().frame(height: 80)
-            timeDisplay
-            micAssignmentLabels
-            // Spacer()
-            verticalStereoMeters
-            // Spacer()
-            recordButton
-              .padding(.bottom, 100)
+          GeometryReader { geometry in
+            // MonitoringsViewと同じ配置にし、余った縦方向の領域をステレオメーターの高さに回す。
+            let meterHeight = min(220, max(180, geometry.size.height * 0.25))
+
+            VStack(spacing: 10) {
+              timeDisplay
+              recordingStatus
+              micAssignmentLabels
+              sceneDestinationPicker
+              verticalStereoMeters(height: meterHeight)
+              Spacer(minLength: 4)
+              recordButton
+            }
+            .padding(.top, 4)
+            .padding(.horizontal)
+            .padding(.bottom, 72)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
           }
-          .padding(.bottom, 40)
         }
       }
       .navigationTitle("Recordings")
+      .navigationBarTitleDisplayMode(.inline)
+      .onAppear { refreshScenes() }
     }
   }
 
@@ -230,6 +277,16 @@ struct RecordingsView: View {
     Text(formatElapsedTime(audioRecorder.elapsedTime))
       .font(.system(size: 48, weight: .thin))
       .monospacedDigit()
+  }
+
+  // 録音状態の表示
+  private var recordingStatus: some View {
+    Text(audioRecorder.isRecording ? "録音中" : "待機中")
+      .font(.headline)
+      .foregroundColor(audioRecorder.isRecording ? .red : .secondary)
+      .padding(.vertical, 6)
+      .padding(.horizontal, 16)
+      .background(Capsule().fill(Color.primary.opacity(0.1)))
   }
 
   // マイクの割り当て表示
@@ -269,12 +326,56 @@ struct RecordingsView: View {
     .scrollContentBackground(.hidden)
   }
 
+  // 保存先はMonitoringsViewと同じUIにする。
+  private var sceneDestinationPicker: some View {
+    Menu {
+      Picker("保存先", selection: $selectedScene) {
+        Text(RecordingFileStore.defaultSceneName).tag(RecordingFileStore.defaultSceneName)
+        ForEach(availableScenes, id: \.self) { scene in
+          Text(scene).tag(scene)
+        }
+      }
+    } label: {
+      HStack {
+        Text("保存先")
+          .foregroundStyle(.black)
+        Spacer()
+        Text(selectedScene)
+          .foregroundStyle(.black)
+          .lineLimit(1)
+        Image(systemName: "chevron.right")
+          .font(.caption)
+          .foregroundStyle(.black.opacity(0.55))
+      }
+      .padding(.horizontal, 16)
+      .frame(height: 44)
+      .background(Color(UIColor.secondarySystemGroupedBackground))
+      .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+    .padding(.horizontal)
+  }
+
+  private func refreshScenes() {
+    do {
+      try RecordingFileStore.shared.prepareStorage()
+      availableScenes = RecordingFileStore.shared.sceneDirectories().map(\.lastPathComponent)
+      if selectedScene != RecordingFileStore.defaultSceneName
+        && !availableScenes.contains(selectedScene)
+      {
+        selectedScene = RecordingFileStore.defaultSceneName
+      }
+    } catch {
+      selectedScene = RecordingFileStore.defaultSceneName
+      availableScenes = []
+    }
+  }
+
   // ステレオメーター部分(縦画面)
-  private var verticalStereoMeters: some View {
+  private func verticalStereoMeters(height: CGFloat) -> some View {
     HStack(spacing: 50) {
       VStack {
         VerticaldBMeter(
-          level: audioRecorder.leftLevel, label: "L", font: .system(.caption))
+          level: audioRecorder.leftLevel, label: "L", font: .system(.caption), height: height)
         Text("\(Int(audioRecorder.leftDecibel)) dB")
           .font(.system(.title3))
           .monospacedDigit()
@@ -282,7 +383,7 @@ struct RecordingsView: View {
       }
       VStack {
         VerticaldBMeter(
-          level: audioRecorder.rightLevel, label: "R", font: .system(.caption))
+          level: audioRecorder.rightLevel, label: "R", font: .system(.caption), height: height)
         Text("\(Int(audioRecorder.rightDecibel)) dB")
           .font(.system(.title3))
           .monospacedDigit()
@@ -292,23 +393,33 @@ struct RecordingsView: View {
   }
 
   // ステレオメーター部分(横画面)
-  private var horizontalStereoMeters: some View {
-    VStack(spacing: 20) {
+  private func horizontalStereoMeters(width: CGFloat, height: CGFloat) -> some View {
+    VStack(spacing: 12) {
       HStack(spacing: 15) {
         HorizontaldBMeter(
-          level: audioRecorder.leftLevel, label: "L", font: .system(.caption))
+          level: audioRecorder.leftLevel,
+          label: "L",
+          width: width,
+          height: height,
+          font: .system(.caption)
+        )
         Text("\(Int(audioRecorder.leftDecibel)) dB")
-          .font(.system(.title3))
+          .font(.system(.subheadline))
           .monospacedDigit()
-          .frame(width: 80, alignment: .leading)
+          .frame(width: 64, alignment: .leading)
       }
       HStack(spacing: 15) {
         HorizontaldBMeter(
-          level: audioRecorder.rightLevel, label: "R", font: .system(.caption))
+          level: audioRecorder.rightLevel,
+          label: "R",
+          width: width,
+          height: height,
+          font: .system(.caption)
+        )
         Text("\(Int(audioRecorder.rightDecibel)) dB")
-          .font(.system(.title3))
+          .font(.system(.subheadline))
           .monospacedDigit()
-          .frame(width: 80, alignment: .leading)
+          .frame(width: 64, alignment: .leading)
       }
     }
   }
@@ -357,7 +468,8 @@ struct VerticaldBMeter: View {
   var level: CGFloat
   var label: String
   var font: Font = .headline
-  var width: CGFloat = 80  // デフォルトの幅を80に設定
+  var width: CGFloat = 56  // 主要画面で圧迫しない幅に抑える
+  var height: CGFloat = 150  // 画面構成に応じて高さだけ調整可能にする
 
   var body: some View {
     VStack(spacing: 8) {
@@ -366,7 +478,7 @@ struct VerticaldBMeter: View {
         // 背景の溝
         RoundedRectangle(cornerRadius: 6)
           .fill(Color.primary.opacity(0.1))
-          .frame(width: width, height: 200)
+          .frame(width: width, height: height)
 
         // 音量レベル（グラデーション）
         RoundedRectangle(cornerRadius: 6)
@@ -375,7 +487,7 @@ struct VerticaldBMeter: View {
               gradient: Gradient(colors: [.red, .white]), startPoint: .top,
               endPoint: .bottom)
           )
-          .frame(width: width, height: 200 * level)
+          .frame(width: width, height: height * level)
           .animation(.spring(response: 0.15, dampingFraction: 0.8), value: level)
       }
     }
@@ -386,7 +498,8 @@ struct VerticaldBMeter: View {
 struct HorizontaldBMeter: View {
   var level: CGFloat
   var label: String
-  var width: CGFloat = 300  // デフォルトの幅を300に設定
+  var width: CGFloat = 240  // 横画面でも操作ボタンや設定欄を圧迫しない幅に抑える
+  var height: CGFloat = 32
   var font: Font = .headline
 
   var body: some View {
@@ -396,7 +509,7 @@ struct HorizontaldBMeter: View {
         // 背景の溝
         RoundedRectangle(cornerRadius: 6)
           .fill(Color.primary.opacity(0.1))
-          .frame(width: width, height: 40)
+          .frame(width: width, height: height)
 
         // 音量レベル（グラデーション）
         RoundedRectangle(cornerRadius: 6)
@@ -405,7 +518,7 @@ struct HorizontaldBMeter: View {
               gradient: Gradient(colors: [.white, .red]), startPoint: .leading,
               endPoint: .trailing)
           )
-          .frame(width: width * level, height: 40)
+          .frame(width: width * level, height: height)
           .animation(.spring(response: 0.15, dampingFraction: 0.8), value: level)
       }
     }

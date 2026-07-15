@@ -97,9 +97,9 @@ class AudioPlayer {
 
   func deleteAudio(audio: URL) {
     self.stopPlayback()
-    let fileManager = FileManager.default
     do {
-      try fileManager.removeItem(at: audio)
+      // WAVと対応する通常CSV・Dev CSVを一組として削除する。
+      try RecordingFileStore.shared.deleteRecording(at: audio)
       UserDefaults.standard.removeObject(forKey: audio.lastPathComponent)
     } catch {
       print("ファイルの削除に失敗しました: \(error.localizedDescription)")
@@ -319,11 +319,16 @@ struct PlayerView: View {
 
       let oldCSVURL = currentURL.deletingPathExtension().appendingPathExtension("csv")
       let newCSVURL = folderURL.appendingPathComponent("\(editFileName).csv")
+      let oldDevCSVURL = folderURL.appendingPathComponent("Dev_\(oldNameWithoutExtension).csv")
+      let newDevCSVURL = folderURL.appendingPathComponent("Dev_\(editFileName).csv")
 
       do {
         try fileManager.moveItem(at: currentURL, to: destinationURL)
         if fileManager.fileExists(atPath: oldCSVURL.path) {
           try fileManager.moveItem(at: oldCSVURL, to: newCSVURL)
+        }
+        if fileManager.fileExists(atPath: oldDevCSVURL.path) {
+          try fileManager.moveItem(at: oldDevCSVURL, to: newDevCSVURL)
         }
         newURL = destinationURL
         currentURL = destinationURL

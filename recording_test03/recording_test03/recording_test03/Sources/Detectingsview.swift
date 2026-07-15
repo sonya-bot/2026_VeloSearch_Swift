@@ -96,6 +96,7 @@ class Detection {
     private var speedcsvData: [String] = []
     private var devcsvData: [String] = []
     private var currentBaseFileName: String = ""
+    private var currentRecordingDirectory: URL?
     private var currentOrientation: String = "横"
     private var currentMicSource: String = "背面"
     private let featureExtractionLock = NSLock()
@@ -152,18 +153,14 @@ class Detection {
         self.currentOrientation = orientation
         self.currentMicSource = micSource
         let audioSession = AVAudioSession.sharedInstance()
-        let fileManager = FileManager.default
-        let documentPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd"
-        let dateString = formatter.string(from: Date())
-        let nextNum = getNextSequenceNumber(dateString: dateString, in: documentPath)
-        
-        self.currentBaseFileName = "Detecting_\(dateString)_\(String(format: "%02d", nextNum))"
-        let audioFilename = documentPath.appendingPathComponent("\(self.currentBaseFileName).wav")
         
         do {
+            // WAVと2種類のCSVが同じSceneへ保存されるよう、開始時のURLを保持する。
+            let recordingFile = try RecordingFileStore.shared.makeRecordingURL(prefix: "Detecting")
+            self.currentBaseFileName = recordingFile.baseName
+            self.currentRecordingDirectory = recordingFile.url.deletingLastPathComponent()
+            let audioFilename = recordingFile.url
+
             try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
             try audioSession.setPreferredSampleRate(targetFormat.sampleRate)
             if audioSession.maximumInputNumberOfChannels >= targetFormat.channelCount {
@@ -412,6 +409,13 @@ class Detection {
         
         timer?.invalidate()
         speedcsvTimer?.invalidate()
+        // Sceneが例外的に消失していた場合は、CSVだけでもDefaultへ退避する。
+        if let directory = currentRecordingDirectory,
+           !FileManager.default.fileExists(atPath: directory.path)
+        {
+            try? RecordingFileStore.shared.prepareStorage()
+            currentRecordingDirectory = RecordingFileStore.shared.defaultDirectory
+        }
         savespeedCSV()
         saveDevCSV()
         featureExtractor.reset()
@@ -622,24 +626,15 @@ class Detection {
         debugBeepDetectedThisFrame = false
     }
     
-    private func getNextSequenceNumber(dateString: String, in directory: URL) -> Int {
-        do {
-            let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-            // 1回のDetectでWAV/CSV/Dev CSVが生成されるため、連番は録音WAVだけを基準にする。
-            let dailyFiles = files.filter {
-                $0.lastPathComponent.hasPrefix("Detecting_\(dateString)") && $0.pathExtension == "wav"
-            }
-            return dailyFiles.count + 1
-        } catch { return 1 }
-    }
-    
     private func savespeedCSV() {
-        let path = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("\(currentBaseFileName).csv")
+        guard let currentRecordingDirectory else { return }
+        let path = currentRecordingDirectory.appendingPathComponent("\(currentBaseFileName).csv")
         do { try speedcsvData.joined(separator: "\n").write(to: path, atomically: true, encoding: .utf8) } catch { print("CSV Error") }
     }
 
     private func saveDevCSV() {
-        let path = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Dev_\(currentBaseFileName).csv")
+        guard let currentRecordingDirectory else { return }
+        let path = currentRecordingDirectory.appendingPathComponent("Dev_\(currentBaseFileName).csv")
         do { try devcsvData.joined(separator: "\n").write(to: path, atomically: true, encoding: .utf8) } catch { print("Dev CSV Error") }
     }
 
@@ -716,6 +711,7 @@ struct DetectingsView: View {
                 }
             }
             .navigationTitle("Detection")
+            .navigationBarTitleDisplayMode(.inline)
             // アラート音のトリガー
             .onChange(of: detection.state) { oldValue, newValue in
                 if newValue == .detect && oldValue != .detect {
