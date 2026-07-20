@@ -30,7 +30,36 @@ class AudioRecorder {
   private var levelTimer: Timer?
   private var startTime: Date?
   private var currentBaseFileName: String = ""
+  private var currentRecordingURL: URL?
   private var measurementTask: Task<Void, Never>?
+  private var statusResetTask: Task<Void, Never>?
+  private var activeInputChannelCount = 0
+
+  private enum RecordingStartError: LocalizedError {
+    case monitoringSoundNotFound(String)
+    case monitoringSoundCannotPlay(String)
+    case builtInMicUnavailable
+    case micDataSourceUnavailable(String)
+    case stereoPolarPatternUnavailable
+    case stereoInputUnavailable(Int)
+
+    var errorDescription: String? {
+      switch self {
+      case .monitoringSoundNotFound(let fileName):
+        return "\(fileName).wav が見つかりません"
+      case .monitoringSoundCannotPlay(let fileName):
+        return "\(fileName).wav を再生できません"
+      case .builtInMicUnavailable:
+        return "内蔵マイクを選択できません"
+      case .micDataSourceUnavailable(let micSource):
+        return "\(micSource)マイクを選択できません"
+      case .stereoPolarPatternUnavailable:
+        return "ステレオ入力に対応していません"
+      case .stereoInputUnavailable(let channelCount):
+        return "ステレオ入力を開始できません: 入力 \(channelCount)ch"
+      }
+    }
+  }
 
   func startRecording(orientation: String, micSource: String, prefix: String = "Recording") {
     let audioSession = AVAudioSession.sharedInstance()
@@ -41,8 +70,10 @@ class AudioRecorder {
       let recordingFile = try RecordingFileStore.shared.makeRecordingURL(prefix: prefix)
       self.currentBaseFileName = recordingFile.baseName
       let audioFilename = recordingFile.url
+      self.currentRecordingURL = audioFilename
 
       measurementTask?.cancel()
+      statusResetTask?.cancel()
       audioPlayer?.stop()
       audioPlayer = nil
 
@@ -57,47 +88,56 @@ class AudioRecorder {
           ?? MonitoringSoundSource.sweep_5s.rawValue
         let soundSource = MonitoringSoundSource(rawValue: soundRawValue) ?? .sweep_5s
 
-        if let soundUrl = Bundle.main.url(forResource: soundSource.fileName, withExtension: "wav") {
-          audioPlayer = try? AVAudioPlayer(contentsOf: soundUrl)
+        guard let soundUrl = Bundle.main.url(forResource: soundSource.fileName, withExtension: "wav") else {
+          throw RecordingStartError.monitoringSoundNotFound(soundSource.fileName)
+        }
+
+        do {
+          audioPlayer = try AVAudioPlayer(contentsOf: soundUrl)
+          audioPlayer?.numberOfLoops = 0
           // 再生開始時の遅延を抑え、録音と再生の経路を開始前に確定させる。
           audioPlayer?.prepareToPlay()
+        } catch {
+          throw RecordingStartError.monitoringSoundCannotPlay(soundSource.fileName)
         }
-      }
-
-      // ハードウェアに入力を2チャンネル（ステレオ）として要求する
-      if audioSession.maximumInputNumberOfChannels >= 2 {
-        try audioSession.setPreferredInputNumberOfChannels(2)
       }
 
       // 録音マイク（前面/背面）とステレオ設定
-      if let availableInputs = audioSession.availableInputs,
+      guard let availableInputs = audioSession.availableInputs,
         let builtInMic = availableInputs.first(where: { $0.portType == .builtInMic })
-      {
-        if let dataSources = builtInMic.dataSources {
-          let targetOrientation: AVAudioSession.Orientation = (micSource == "背面") ? .back : .front
-          if let selectedDataSource = dataSources.first(where: {
-            $0.orientation == targetOrientation
-          }) {
-
-            // 対象のマイク(前面/背面)をハードウェアにセット
-            try builtInMic.setPreferredDataSource(selectedDataSource)
-
-            // マイクのステレオ指向性をセット
-            if let supportedPatterns = selectedDataSource.supportedPolarPatterns,
-              supportedPatterns.contains(.stereo)
-            {
-              try selectedDataSource.setPreferredPolarPattern(.stereo)
-              print("ステレオ入力を適用しました")
-            } else {
-              print("このマイクはステレオ入力をサポートしていません")
-            }
-
-            // デバイス全体にこのマイク入力を適用
-            try audioSession.setPreferredInput(builtInMic)
-            print("マイク設定: \(micSource) を選択")
-          }
-        }
+      else {
+        throw RecordingStartError.builtInMicUnavailable
       }
+
+      let targetOrientation: AVAudioSession.Orientation = (micSource == "背面") ? .back : .front
+      guard let selectedDataSource = builtInMic.dataSources?.first(where: {
+        $0.orientation == targetOrientation
+      }) else {
+        throw RecordingStartError.micDataSourceUnavailable(micSource)
+      }
+
+      // 対象のマイク(前面/背面)をハードウェアにセット
+      try builtInMic.setPreferredDataSource(selectedDataSource)
+
+      // ステレオ非対応の入力では定位用データとして扱えないため、録音開始前に失敗扱いにする。
+      guard let supportedPatterns = selectedDataSource.supportedPolarPatterns,
+        supportedPatterns.contains(.stereo)
+      else {
+        throw RecordingStartError.stereoPolarPatternUnavailable
+      }
+      try selectedDataSource.setPreferredPolarPattern(.stereo)
+      print("ステレオ入力を適用しました")
+
+      // デバイス全体にこのマイク入力を適用
+      try audioSession.setPreferredInput(builtInMic)
+      print("マイク設定: \(micSource) を選択")
+
+      // stereo polar patternと入力ポートを確定した後で2chを要求する。
+      // 要求前にmaximumInputNumberOfChannelsを見ると、未確定の経路で1ch判定になる場合がある。
+      guard audioSession.maximumInputNumberOfChannels >= 2 else {
+        throw RecordingStartError.stereoInputUnavailable(audioSession.maximumInputNumberOfChannels)
+      }
+      try audioSession.setPreferredInputNumberOfChannels(2)
 
       // 端末の向き設定を反映（必ずマイク設定の「後」に行う）
       if orientation == "縦" {
@@ -121,6 +161,9 @@ class AudioRecorder {
       print("録音開始: \(audioFilename.lastPathComponent)")
       audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
       audioRecorder?.isMeteringEnabled = true
+      // AVAudioRecorder作成直後のformat.channelCountはBluetooth出力時に1chを返す場合がある。
+      // 録音は2ch設定で要求し、実ファイルが2chかどうかはstopRecording後に検査する。
+      activeInputChannelCount = 2
 
       isRecording = true
       elapsedTime = 0.0
@@ -133,12 +176,14 @@ class AudioRecorder {
         self.elapsedTime = Date().timeIntervalSince(startTime)
       }
 
-      startMonitoring()
-
       if isMonitoringRecording {
-        // Monitoringは同じ録音設定で、開始直後にテスト音を再生し、再生終了後に自動停止する。
+        // Monitoringも2ch設定で録音を開始し、保存後に実ファイルのチャンネル数を確認する。
         measurementTask = Task {
           audioRecorder?.record()
+
+          await MainActor.run {
+            self.startMonitoring()
+          }
 
           let duration = audioPlayer?.duration ?? 0
           audioPlayer?.play()
@@ -152,15 +197,31 @@ class AudioRecorder {
         }
       } else {
         audioRecorder?.record()
+        startMonitoring()
       }
 
     } catch {
       print("エラー: \(error.localizedDescription)")
+      audioRecorder?.stop()
+      audioPlayer?.stop()
+      audioRecorder = nil
+      audioPlayer = nil
+      measurementTask?.cancel()
+      statusResetTask?.cancel()
+      timer?.invalidate()
+      levelTimer?.invalidate()
+      activeInputChannelCount = 0
+      currentRecordingURL = nil
+      isRecording = false
+      measurementStatus = error.localizedDescription
     }
   }
 
   func stopRecording() {
+    let recordedURL = currentRecordingURL
+
     measurementTask?.cancel()
+    statusResetTask?.cancel()
     audioRecorder?.stop()
     audioPlayer?.stop()
     isRecording = false
@@ -172,6 +233,24 @@ class AudioRecorder {
     rightLevel = 0.0
     leftDecibel = 0.0
     rightDecibel = 0.0
+    activeInputChannelCount = 0
+    currentRecordingURL = nil
+
+    if let recordedURL, !isStereoRecordingFile(recordedURL) {
+      try? FileManager.default.removeItem(at: recordedURL)
+      measurementStatus = "ステレオ録音未成立"
+      // 失敗理由を見逃さないよう、一定時間だけステータス表示を保持する。
+      statusResetTask = Task {
+        try? await Task.sleep(nanoseconds: 3_000_000_000)
+        if Task.isCancelled { return }
+
+        await MainActor.run {
+          if !self.isRecording && self.measurementStatus == "ステレオ録音未成立" {
+            self.measurementStatus = "待機中"
+          }
+        }
+      }
+    }
   }
 
   private func startMonitoring() {
@@ -181,6 +260,12 @@ class AudioRecorder {
 
       // L(0) と R(1) のパワーを取得
       self.leftDecibel = recorder.averagePower(forChannel: 0)
+      guard self.activeInputChannelCount >= 2 else {
+        self.rightDecibel = 0.0
+        self.leftLevel = self.normalizeSoundLevel(level: self.leftDecibel)
+        self.rightLevel = 0.0
+        return
+      }
       self.rightDecibel = recorder.averagePower(forChannel: 1)
 
       // 表示用に 0.0~1.0 に正規化
@@ -194,6 +279,16 @@ class AudioRecorder {
     if level < minDb { return 0.01 }
     if level >= 0.0 { return 1.0 }
     return CGFloat((level - minDb) / abs(minDb))
+  }
+
+  private func isStereoRecordingFile(_ url: URL) -> Bool {
+    do {
+      let file = try AVAudioFile(forReading: url)
+      return file.fileFormat.channelCount == 2
+    } catch {
+      print("録音ファイル確認エラー: \(error.localizedDescription)")
+      return false
+    }
   }
 }
 
