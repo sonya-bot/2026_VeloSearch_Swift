@@ -185,9 +185,6 @@ struct CollectionsView: View {
       .navigationTitle("Collections")
       .navigationBarTitleDisplayMode(.inline)
       .searchable(text: $searchText, prompt: "Search Recordings")
-      .navigationDestination(for: URL.self) { url in
-        PlayerView(audioURL: url)
-      }
       .toolbar {
         ToolbarItemGroup(placement: .topBarTrailing) {
           Button {
@@ -363,7 +360,8 @@ private struct RecordingRows: View {
 
   var body: some View {
     ForEach(items, id: \.self) { item in
-      NavigationLink(value: item) {
+      // URL値ベースの遷移では、一覧更新時に遷移状態が解除されることがあるため直接Playerを生成する。
+      NavigationLink(destination: PlayerView(audioURL: item)) {
         Label {
           HStack {
             if isFavorite(item) {

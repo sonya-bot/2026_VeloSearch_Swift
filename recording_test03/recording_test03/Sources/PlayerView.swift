@@ -134,7 +134,7 @@ struct PlayerView: View {
 
   @State private var sheetDetent: PresentationDetent = .height(180)
   // 編集用のデータ
-  @State private var isEditing = true
+  @State private var isEditing = false
   @State private var editFileName = ""
   @State private var editNote = ""
   @State private var editExperimenter = ""
@@ -232,8 +232,6 @@ struct PlayerView: View {
       }
       // シートの高さを指定（最初はファイル名のみが見える低さ、中、全画面）
       .presentationDetents([.height(180), .medium, .large], selection: $sheetDetent)
-      // 背景（プレイヤー画面）の操作を許可
-      .presentationBackgroundInteraction(.enabled(upThrough: .medium))
       // 上部のドラッグインジケーター（つまみ）を表示
       .presentationDragIndicator(.visible)
       // スワイプでシートが閉じないようにする
@@ -243,6 +241,15 @@ struct PlayerView: View {
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
       ToolbarItemGroup(placement: .topBarTrailing) {
+        if verticalSizeClass != .compact {
+          Button(action: {
+            startEditing()
+            sheetDetent = .medium
+            isEditing = true
+          }) {
+            Image(systemName: "pencil")
+          }
+        }
         Button(action: { shareAudio(url: currentURL) }) {
           Image(systemName: "square.and.arrow.up")
         }
@@ -528,6 +535,7 @@ struct EditSheetView: View {
 
           Button("保存") {
             onSave()
+            isPresented = false
             sheetDetent = .height(180)  // 保存後に元の高さに閉じる
           }
           .bold()

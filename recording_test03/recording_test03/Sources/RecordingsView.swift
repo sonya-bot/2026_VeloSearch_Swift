@@ -64,6 +64,10 @@ class AudioRecorder {
   func startRecording(orientation: String, micSource: String, prefix: String = "Recording") {
     let audioSession = AVAudioSession.sharedInstance()
     let isMonitoringRecording = prefix == "Monitoring"
+    let outputRawValue =
+      UserDefaults.standard.string(forKey: "selectedOutputDevice")
+      ?? OutputDeviceOption.speaker.rawValue
+    let outputDevice = OutputDeviceOption(rawValue: outputRawValue) ?? .speaker
 
     do {
       // 録音開始時点のSceneと連番を固定し、録音中の設定変更から保存先を切り離す。
@@ -77,10 +81,20 @@ class AudioRecorder {
       audioPlayer?.stop()
       audioPlayer = nil
 
-      // オーディオセッションの設定はMonitoringsViewと揃える。
+      // Monitoringでは設定画面の再生デバイス指定に合わせて出力経路を分ける。
+      // Bluetooth再生時に.defaultToSpeakerを同時指定すると、経路選択が曖昧になりやすい。
+      let sessionOptions: AVAudioSession.CategoryOptions =
+        outputDevice == .external
+        ? [.allowBluetoothA2DP]
+        : [.defaultToSpeaker]
       try audioSession.setCategory(
-        .playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
+        .playAndRecord, mode: .default, options: sessionOptions)
       try audioSession.setActive(true)
+      if outputDevice == .speaker {
+        try audioSession.overrideOutputAudioPort(.speaker)
+      } else {
+        try audioSession.overrideOutputAudioPort(.none)
+      }
 
       if isMonitoringRecording {
         let soundRawValue =
@@ -95,6 +109,7 @@ class AudioRecorder {
         do {
           audioPlayer = try AVAudioPlayer(contentsOf: soundUrl)
           audioPlayer?.numberOfLoops = 0
+          audioPlayer?.volume = 1.0
           // 再生開始時の遅延を抑え、録音と再生の経路を開始前に確定させる。
           audioPlayer?.prepareToPlay()
         } catch {
