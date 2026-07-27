@@ -2,14 +2,14 @@ import Foundation
 import CoreML
 
 class MLModelManager {
-    private var model: _20260703_225631_hybrid_Best_model_epoch53?
+    private var model: _20260725_010849_hybrid_Best_model_epoch59?
     let detectionThreshold: Float = 50.0 // しきい値 50%
     
     init() {
         do {
             let config = MLModelConfiguration()
             config.computeUnits = .all
-            self.model = try _20260703_225631_hybrid_Best_model_epoch53(configuration: config)
+            self.model = try _20260725_010849_hybrid_Best_model_epoch59(configuration: config)
         } catch {
             print("Core MLモデルロード失敗: \(error)")
         }
@@ -19,7 +19,7 @@ class MLModelManager {
         guard let model = model else { return nil }
 
         do {
-            let input = _20260703_225631_hybrid_Best_model_epoch53Input(audioFeatures: features)
+            let input = _20260725_010849_hybrid_Best_model_epoch59Input(audioFeatures: features)
             let output = try model.prediction(input: input)
 
             // デバッグ用
