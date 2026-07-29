@@ -17,12 +17,14 @@ struct DetectingsView_Previews: PreviewProvider {
 enum DetectionState {
     case standby
     case safe
+    case uncertain
     case detect
     
     var title: String {
         switch self {
         case .standby: return "Standby"
         case .safe: return "Safe"
+        case .uncertain: return "Uncertain"
         case .detect: return "Detect"
         }
     }
@@ -30,6 +32,7 @@ enum DetectionState {
         switch self {
         case .standby: return .secondary
         case .safe: return .green
+        case .uncertain: return .orange
         case .detect: return .red
         }
     }
@@ -71,9 +74,11 @@ class Detection {
     var elapsedTime: TimeInterval = 0.0
     var currentDecibel: Float = -160.0
     
-    var currentAIAngle: Int = 0
+    var currentAIAngle: Int?
     var currentAIProbability: Float = 0.0
+    var currentDirectionProbabilities: [Float] = Array(repeating: 0.0, count: 8)
     var currentGroundTruth: String = "FalseDetect" // ピッカー選択値
+    var warningTriggerID: Int = 0
 
     // ===== デバッグ情報 =====
     var debugBufferCount: Int = 0
@@ -95,6 +100,7 @@ class Detection {
     private var speedcsvTimer: Timer?
     private var speedcsvData: [String] = []
     private var devcsvData: [String] = []
+    private var eventcsvData: [String] = []
     private var currentBaseFileName: String = ""
     private var currentRecordingDirectory: URL?
     private var currentOrientation: String = "横"
@@ -111,6 +117,12 @@ class Detection {
     private var preRollR: [Float] = []
     private var localizationState: LocalizationState = .listeningForBeep
     private var beepDetectedAt: Date?
+    private var pendingEventID: Int?
+    private var pendingGroundTruth: String = "FalseDetect"
+    private var nextEventID: Int = 1
+    private var resultClearTask: Task<Void, Never>?
+    private var isWarningArmed = true
+    private let resultDisplaySeconds: TimeInterval = 3.0
 
     func playBeepSound() {
         guard isRecording else {
@@ -206,12 +218,24 @@ class Detection {
             resetPreRollBuffer()
             setLocalizationState(.listeningForBeep)
             resetDebugMetrics()
+            resultClearTask?.cancel()
+            resultClearTask = nil
+            currentAIAngle = nil
+            currentAIProbability = 0.0
+            currentDirectionProbabilities = Array(repeating: 0.0, count: 8)
+            pendingEventID = nil
+            pendingGroundTruth = "FalseDetect"
+            nextEventID = 1
+            isWarningArmed = true
             
             speedcsvData = [
             "elapsed_time,speed_kmh,volume_db,status,ai_angle,ai_probability,ground_truth_angle,device_orientation,mic_source,buffer_count,feature_created,predict_executed,predict_success"
             ]
             devcsvData = [
                 "elapsed_time,speed_kmh,volume_db,status,ai_angle,ai_probability,ground_truth_angle,device_orientation,mic_source,update_ms,feature_skip_count,prediction_skip_count,beep_detected_count,beep_detected_this_frame,last_beep_elapsed_time,beep_to_prediction_ms,localization_state,buffer_count,feature_created,predict_executed,predict_success,debug_message"
+            ]
+            eventcsvData = [
+                "event_id,model_name,elapsed_time,ground_truth_angle,predicted_angle,max_probability,accepted,prob_000,prob_045,prob_090,prob_135,prob_180,prob_225,prob_270,prob_315,beep_detected_time,prediction_completed_time,beep_to_prediction_ms,warning_triggered,prediction_success"
             ]
             
             timer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] _ in
@@ -311,6 +335,9 @@ class Detection {
 
             featureExtractor.reset()
             beepDetectedAt = time
+            pendingEventID = nextEventID
+            nextEventID += 1
+            pendingGroundTruth = currentGroundTruth
             debugBeepDetectedCount += 1
             debugBeepDetectedThisFrame = true
             debugLastBeepElapsedTime = elapsedTime
@@ -409,6 +436,8 @@ class Detection {
         
         timer?.invalidate()
         speedcsvTimer?.invalidate()
+        resultClearTask?.cancel()
+        resultClearTask = nil
         // Sceneが例外的に消失していた場合は、CSVだけでもDefaultへ退避する。
         if let directory = currentRecordingDirectory,
            !FileManager.default.fileExists(atPath: directory.path)
@@ -418,10 +447,12 @@ class Detection {
         }
         savespeedCSV()
         saveDevCSV()
+        saveEventCSV()
         featureExtractor.reset()
         beepDetector.reset()
         resetPreRollBuffer()
         beepDetectedAt = nil
+        pendingEventID = nil
         setLocalizationState(.listeningForBeep)
         resetDetectionDisplay()
     }
@@ -482,6 +513,8 @@ class Detection {
                     guard self.isRecording else { return }
 
                     let now = Date()
+                    let predictionCompletedTime = self.elapsedTime
+                    let beepDetectedTime = self.debugLastBeepElapsedTime
                     if let lastPredictionSuccessTime = self.lastPredictionSuccessTime {
                         self.debugLastUpdateMs = now.timeIntervalSince(lastPredictionSuccessTime) * 1000.0
                     }
@@ -492,22 +525,64 @@ class Detection {
                     }
 
                     self.currentAIAngle = result.angle
-                    self.currentAIProbability = result.probability
+                    self.currentAIProbability = result.maxProbability * 100.0
+                    self.currentDirectionProbabilities = result.probabilities
 
-                    self.state =
-                        result.probability >= self.mlManager.detectionThreshold
-                        ? .detect
-                        : .safe
+                    let accepted = result.maxProbability >= self.mlManager.detectionThreshold
+                    var warningTriggered = false
+                    if accepted {
+                        self.state = .detect
+                        if self.isWarningArmed {
+                            self.warningTriggerID += 1
+                            self.isWarningArmed = false
+                            warningTriggered = true
+                        }
+                    } else {
+                        self.state = .uncertain
+                        self.isWarningArmed = true
+                    }
+
+                    self.appendLocalizationEvent(
+                        eventID: self.pendingEventID,
+                        groundTruth: self.pendingGroundTruth,
+                        predictedAngle: result.angle,
+                        maxProbability: result.maxProbability,
+                        probabilities: result.probabilities,
+                        accepted: accepted,
+                        beepDetectedTime: beepDetectedTime,
+                        predictionCompletedTime: predictionCompletedTime,
+                        beepToPredictionMs: self.debugBeepToPredictionMs,
+                        warningTriggered: warningTriggered,
+                        predictionSuccess: true
+                    )
+                    self.scheduleResultClear()
                     self.featureExtractor.reset()
                     self.beepDetectedAt = nil
+                    self.pendingEventID = nil
                     self.setLocalizationState(.listeningForBeep)
                 }
             } else {
                 Task { @MainActor in
                     guard self.isRecording else { return }
                     self.debugPredictSuccess = false
+                    self.appendLocalizationEvent(
+                        eventID: self.pendingEventID,
+                        groundTruth: self.pendingGroundTruth,
+                        predictedAngle: nil,
+                        maxProbability: nil,
+                        probabilities: nil,
+                        accepted: false,
+                        beepDetectedTime: self.debugLastBeepElapsedTime,
+                        predictionCompletedTime: self.elapsedTime,
+                        beepToPredictionMs: self.beepDetectedAt.map {
+                            Date().timeIntervalSince($0) * 1000.0
+                        } ?? 0.0,
+                        warningTriggered: false,
+                        predictionSuccess: false
+                    )
                     self.featureExtractor.reset()
                     self.beepDetectedAt = nil
+                    self.pendingEventID = nil
                     self.setLocalizationState(.listeningForBeep)
                 }
             }
@@ -532,6 +607,22 @@ class Detection {
         predictionLock.unlock()
     }
 
+    private func scheduleResultClear() {
+        resultClearTask?.cancel()
+        resultClearTask = Task { @MainActor [weak self] in
+            let nanoseconds = UInt64((self?.resultDisplaySeconds ?? 3.0) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard !Task.isCancelled, let self else { return }
+
+            self.currentAIAngle = nil
+            self.currentAIProbability = 0.0
+            self.currentDirectionProbabilities = Array(repeating: 0.0, count: 8)
+            self.state = self.isRecording ? .safe : .standby
+            self.isWarningArmed = true
+            self.resultClearTask = nil
+        }
+    }
+
     private func resetDebugMetrics() {
         debugBufferCount = 0
         debugFeatureCreated = false
@@ -550,11 +641,15 @@ class Detection {
     }
 
     private func resetDetectionDisplay() {
+        resultClearTask?.cancel()
+        resultClearTask = nil
         elapsedTime = 0.0
         currentDecibel = -160.0
-        currentAIAngle = 0
+        currentAIAngle = nil
         currentAIProbability = 0.0
+        currentDirectionProbabilities = Array(repeating: 0.0, count: 8)
         currentGroundTruth = "FalseDetect"
+        isWarningArmed = true
         resetDebugMetrics()
     }
     
@@ -567,19 +662,62 @@ class Detection {
             self.currentDecibel = avgPower.isNaN || avgPower.isInfinite ? -160.0 : max(avgPower, -160.0)
         }
     }
+
+    private func appendLocalizationEvent(
+        eventID: Int?,
+        groundTruth: String,
+        predictedAngle: Int?,
+        maxProbability: Float?,
+        probabilities: [Float]?,
+        accepted: Bool,
+        beepDetectedTime: TimeInterval,
+        predictionCompletedTime: TimeInterval,
+        beepToPredictionMs: TimeInterval,
+        warningTriggered: Bool,
+        predictionSuccess: Bool
+    ) {
+        let probabilityFields: [String]
+        if let probabilities, probabilities.count == 8 {
+            probabilityFields = probabilities.map { String(format: "%.6f", $0) }
+        } else {
+            probabilityFields = Array(repeating: "", count: 8)
+        }
+
+        let fields = [
+            eventID.map(String.init) ?? "",
+            MLModelManager.modelName,
+            String(format: "%.2f", predictionCompletedTime),
+            groundTruth,
+            predictedAngle.map(String.init) ?? "",
+            maxProbability.map { String(format: "%.6f", $0) } ?? "",
+            accepted.description,
+        ] + probabilityFields + [
+            String(format: "%.2f", beepDetectedTime),
+            String(format: "%.2f", predictionCompletedTime),
+            String(format: "%.1f", beepToPredictionMs),
+            warningTriggered.description,
+            predictionSuccess.description,
+        ]
+
+        eventcsvData.append(fields.map(csvEscaped).joined(separator: ","))
+    }
     
     private func recordCSVLog(locationManager: LocationManager) {
 
         let speed = locationManager.speed * 3.6
+        let angle = currentAIAngle.map(String.init) ?? ""
+        let probability = currentAIAngle == nil
+            ? ""
+            : String(format: "%.1f", currentAIProbability)
 
         let logLine = String(
-            format: "%.2f,%.1f,%.1f,%@,%d,%.1f,%@,%@,%@,%d,%@,%@,%@",
+            format: "%.2f,%.1f,%.1f,%@,%@,%@,%@,%@,%@,%d,%@,%@,%@",
             elapsedTime,
             speed,
             currentDecibel,
             state.title,
-            currentAIAngle,
-            currentAIProbability,
+            angle,
+            probability,
             currentGroundTruth,
             currentOrientation,
             currentMicSource,
@@ -594,15 +732,19 @@ class Detection {
 
     private func recordDevCSVLog(locationManager: LocationManager) {
         let speed = locationManager.speed * 3.6
+        let angle = currentAIAngle.map(String.init) ?? ""
+        let probability = currentAIAngle == nil
+            ? ""
+            : String(format: "%.1f", currentAIProbability)
 
         let logLine = String(
-            format: "%.2f,%.1f,%.1f,%@,%d,%.1f,%@,%@,%@,%.1f,%d,%d,%d,%@,%.2f,%.1f,%@,%d,%@,%@,%@,%@",
+            format: "%.2f,%.1f,%.1f,%@,%@,%@,%@,%@,%@,%.1f,%d,%d,%d,%@,%.2f,%.1f,%@,%d,%@,%@,%@,%@",
             elapsedTime,
             speed,
             currentDecibel,
             state.title,
-            currentAIAngle,
-            currentAIProbability,
+            angle,
+            probability,
             currentGroundTruth,
             currentOrientation,
             currentMicSource,
@@ -636,6 +778,12 @@ class Detection {
         guard let currentRecordingDirectory else { return }
         let path = currentRecordingDirectory.appendingPathComponent("Dev_\(currentBaseFileName).csv")
         do { try devcsvData.joined(separator: "\n").write(to: path, atomically: true, encoding: .utf8) } catch { print("Dev CSV Error") }
+    }
+
+    private func saveEventCSV() {
+        guard let currentRecordingDirectory else { return }
+        let path = currentRecordingDirectory.appendingPathComponent("Localization_\(currentBaseFileName).csv")
+        do { try eventcsvData.joined(separator: "\n").write(to: path, atomically: true, encoding: .utf8) } catch { print("Localization CSV Error") }
     }
 
     private func csvEscaped(_ value: String) -> String {
@@ -712,9 +860,9 @@ struct DetectingsView: View {
             }
             .navigationTitle("Detection")
             .navigationBarTitleDisplayMode(.inline)
-            // アラート音のトリガー
-            .onChange(of: detection.state) { oldValue, newValue in
-                if newValue == .detect && oldValue != .detect {
+            // 連続したDetect期間につき、アラート音は最初の1回だけ再生する。
+            .onChange(of: detection.warningTriggerID) { oldValue, newValue in
+                if newValue > oldValue {
                     AudioServicesPlaySystemSound(SystemSoundID(selectedSoundID))
                 }
             }
@@ -723,7 +871,13 @@ struct DetectingsView: View {
 
     // MARK: - UI Components
     private var statusView: some View {
-        let statusText = detection.state == .detect ? "\(detection.state.title) (\(detection.currentAIAngle)°)" : detection.state.title
+        let statusText: String
+        if let angle = detection.currentAIAngle,
+           detection.state == .detect || detection.state == .uncertain {
+            statusText = "\(detection.state.title) (\(angle)°)"
+        } else {
+            statusText = detection.state.title
+        }
         return Text(statusText)
             .font(.system(size: 28, weight: .bold))
             .minimumScaleFactor(0.5)
@@ -747,8 +901,12 @@ struct DetectingsView: View {
     }
 
     private func debugOverlay(isLandscape: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("AI: \(detection.currentAIAngle)deg / \(Int(detection.currentAIProbability))%")
+        let angleText = detection.currentAIAngle.map(String.init) ?? "--"
+        let probabilityText = detection.currentAIAngle == nil
+            ? "--"
+            : String(Int(detection.currentAIProbability))
+        return VStack(alignment: .leading, spacing: 4) {
+            Text("AI: \(angleText)deg / \(probabilityText)%")
             Text("Update: \(Int(detection.debugLastUpdateMs))ms")
             Text("Skipped: Extract \(detection.debugFeatureSkipCount) / AI \(detection.debugPredictionSkipCount)")
         }
@@ -874,7 +1032,7 @@ struct DetectingsView: View {
 // 動的レーダーUI
 struct RadarView: View {
     let state: DetectionState
-    let aiAngle: Int
+    let aiAngle: Int?
 
     var body: some View {
         ZStack {
@@ -894,7 +1052,7 @@ struct RadarView: View {
                 }
             }
             
-            if state == .detect {
+            if state == .detect, let aiAngle {
                 SectorHighlight(state: state)
                     // 真上が0度になるように -90度オフセットし、AIの角度を加算して回転
                     .rotationEffect(.degrees(Double(aiAngle - 90)))

@@ -1,9 +1,17 @@
 import Foundation
 import CoreML
 
+struct DirectionPrediction {
+    let angle: Int
+    let maxProbability: Float
+    let probabilities: [Float]
+}
+
 class MLModelManager {
+    static let modelName = "20260725-010849_hybrid_Best_model_epoch59"
+
     private var model: _20260725_010849_hybrid_Best_model_epoch59?
-    let detectionThreshold: Float = 50.0 // しきい値 50%
+    let detectionThreshold: Float = 0.40
     
     init() {
         do {
@@ -15,34 +23,37 @@ class MLModelManager {
         }
     }
     
-    func predict(features: MLMultiArray) -> (angle: Int, probability: Float)? {
+    func predict(features: MLMultiArray) -> DirectionPrediction? {
         guard let model = model else { return nil }
 
         do {
             let input = _20260725_010849_hybrid_Best_model_epoch59Input(audioFeatures: features)
             let output = try model.prediction(input: input)
 
-            // デバッグ用
-            // print("===== CoreML Output =====")
-
-            var maxProb: Float = 0.0
-            var maxIndex = 0
-
-            for i in 0..<8 {
-                // Core ML変換時点でlog_softmax出力をexp済みなので、ここでは百分率への変換だけを行う。
-                let prob = output.directionProbabilities[i].floatValue * 100.0
-
-                // print("Class \(i): \(prob)%")
-
-                if prob > maxProb {
-                    maxProb = prob
-                    maxIndex = i
-                }
+            guard output.directionProbabilities.count == 8 else {
+                print("推論出力数が不正です: \(output.directionProbabilities.count)")
+                return nil
             }
 
-            // print("Max = \(maxProb)%, index = \(maxIndex)")
+            let probabilities = (0..<8).map {
+                output.directionProbabilities[$0].floatValue
+            }
+            guard probabilities.allSatisfy({ $0.isFinite && $0 >= 0.0 }) else {
+                print("推論確率に不正な値が含まれています")
+                return nil
+            }
 
-            return (maxIndex * 45, maxProb)
+            guard let maxIndex = probabilities.indices.max(
+                by: { probabilities[$0] < probabilities[$1] }
+            ) else {
+                return nil
+            }
+
+            return DirectionPrediction(
+                angle: maxIndex * 45,
+                maxProbability: probabilities[maxIndex],
+                probabilities: probabilities
+            )
 
         } catch {
             print("推論エラー: \(error)")
