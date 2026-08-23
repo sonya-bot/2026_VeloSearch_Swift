@@ -60,41 +60,30 @@ struct MonitoringView: View {
 
         if verticalSizeClass == .compact {
           // 【横画面レイアウト】
-          GeometryReader { geometry in
-            let meterWidth = min(340, max(150, geometry.size.width * 0.36))
-
-            HStack(spacing: 16) {
-              VStack(spacing: 10) {
-                timeDisplay
-                monitoringStatus
-                Spacer(minLength: 0)
-                recordButton
-                Spacer(minLength: 0)
-              }
-              .frame(width: (geometry.size.width - 16) / 3)
-
-              VStack(spacing: 8) {
-                AudioRouteStatusButton(
-                  audioIOController: audioIOController,
-                  displayMode: .compact
-                )
-                measurementSettings(isCompact: true)
-                horizontalStereoMeters(width: meterWidth, height: 24)
-                  .frame(maxWidth: .infinity, maxHeight: .infinity)
-                  .background(Color(uiColor: .secondarySystemGroupedBackground))
-                  .clipShape(RoundedRectangle(cornerRadius: 14))
-              }
-              .frame(width: (geometry.size.width - 16) * 2 / 3)
+          MeasurementLandscapeLayout { _ in
+            VStack(spacing: 10) {
+              timeDisplay
+              monitoringStatus
+              Spacer(minLength: 0)
+              recordButton
+              Spacer(minLength: 0)
             }
-            .frame(maxHeight: .infinity)
+          } trailingContent: { availableSize in
+            let meterWidth = min(340, max(150, availableSize.width * 0.36))
+            VStack(spacing: 8) {
+              AudioRouteStatusButton(audioIOController: audioIOController)
+              measurementSettings(isCompact: true)
+              horizontalStereoMeters(width: meterWidth, height: 24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(uiColor: .secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
           }
-          .padding(.horizontal, 16)
-          .padding(.vertical, 8)
         } else {
           // 【縦画面レイアウト】
           GeometryReader { geometry in
             // 固定余白を削り、余った縦方向の領域をステレオメーターの高さに回す。
-            let meterHeight = min(220, max(180, geometry.size.height * 0.25))
+            let meterHeight = min(210, max(120, geometry.size.height * 0.24))
 
             VStack(spacing: 10) {
               AudioRouteStatusButton(audioIOController: audioIOController)
@@ -107,12 +96,11 @@ struct MonitoringView: View {
               .frame(maxWidth: .infinity, maxHeight: .infinity)
               .background(Color(uiColor: .secondarySystemGroupedBackground))
               .clipShape(RoundedRectangle(cornerRadius: 16))
-              Spacer(minLength: 4)
               recordButton
             }
             .padding(.top, 4)
             .padding(.horizontal)
-            .padding(.bottom, 72)
+            .padding(.bottom, 8)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
           }
         }

@@ -933,25 +933,18 @@ struct DetectionView: View {
           let isLandscape = geometry.size.width > geometry.size.height
 
           if isLandscape {
-            HStack(spacing: 16) {
+            MeasurementLandscapeLayout { _ in
               VStack(spacing: 10) {
                 detectionPanel(isLandscape: true)
                 actionButtons
               }
-              .frame(width: (geometry.size.width - 16) / 3)
-
+            } trailingContent: { _ in
               VStack(spacing: 8) {
-                AudioRouteStatusButton(
-                  audioIOController: audioIOController,
-                  displayMode: .compact
-                )
+                AudioRouteStatusButton(audioIOController: audioIOController)
                 measurementSettings
                 detectionDetails
               }
-              .frame(width: (geometry.size.width - 16) * 2 / 3)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
           } else {
             VStack(spacing: 10) {
               AudioRouteStatusButton(audioIOController: audioIOController)
@@ -993,12 +986,21 @@ struct DetectionView: View {
     } else {
       statusText = detection.state.title
     }
-    return Text(statusText)
-      .font(.headline)
-      .foregroundStyle(detection.state.themeColor)
-      .minimumScaleFactor(0.5)
-      .frame(maxWidth: .infinity)
-      .padding(.vertical, 10)
+    return HStack(spacing: 8) {
+      Circle()
+        .fill(detection.state.themeColor)
+        .frame(width: 10, height: 10)
+      Text(statusText)
+        .font(.title2.bold())
+        .minimumScaleFactor(0.6)
+    }
+    .foregroundStyle(detection.state.themeColor)
+    .padding(.horizontal, 16)
+    .padding(.vertical, 8)
+    .background(detection.state.themeColor.opacity(0.12), in: Capsule())
+    .frame(maxWidth: .infinity)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Status: \(statusText)")
   }
 
   private func detectionPanel(isLandscape: Bool) -> some View {
@@ -1014,6 +1016,21 @@ struct DetectionView: View {
           }
         }
       Spacer(minLength: 0)
+      if !isLandscape {
+        HStack {
+          Text(formatElapsedTime(detection.elapsedTime))
+          Spacer()
+          Text(currentDecibelText)
+        }
+        .font(.caption)
+        .monospacedDigit()
+        .padding(.horizontal, 12)
+
+        directionProbabilityBars
+          .frame(height: 92)
+          .padding(.horizontal, 12)
+          .padding(.bottom, 8)
+      }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color(uiColor: .secondarySystemGroupedBackground))
@@ -1114,36 +1131,40 @@ struct DetectionView: View {
       }
       .font(.caption)
 
-      GeometryReader { geometry in
-        HStack(alignment: .bottom, spacing: 6) {
-          ForEach(0..<8, id: \.self) { index in
-            let probability =
-              detection.currentDirectionProbabilities.indices.contains(index)
-              ? detection.currentDirectionProbabilities[index] : 0
-            VStack(spacing: 3) {
-              Spacer(minLength: 0)
-              RoundedRectangle(cornerRadius: 4)
-                .fill(Color.blue)
-                .frame(
-                  height: max(
-                    2,
-                    (geometry.size.height - 34)
-                      * min(max(CGFloat(probability), 0), 1)
-                  )
-                )
-              Text("\(index * 45)°")
-                .font(.caption2)
-                .minimumScaleFactor(0.7)
-            }
-            .frame(maxWidth: .infinity)
-          }
-        }
-      }
+      directionProbabilityBars
     }
     .padding(12)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color(uiColor: .secondarySystemGroupedBackground))
     .clipShape(RoundedRectangle(cornerRadius: 14))
+  }
+
+  private var directionProbabilityBars: some View {
+    GeometryReader { geometry in
+      HStack(alignment: .bottom, spacing: 6) {
+        ForEach(0..<8, id: \.self) { index in
+          let probability =
+            detection.currentDirectionProbabilities.indices.contains(index)
+            ? detection.currentDirectionProbabilities[index] : 0
+          VStack(spacing: 3) {
+            Spacer(minLength: 0)
+            RoundedRectangle(cornerRadius: 4)
+              .fill(Color.blue)
+              .frame(
+                height: max(
+                  2,
+                  (geometry.size.height - 22)
+                    * min(max(CGFloat(probability), 0), 1)
+                )
+              )
+            Text("\(index * 45)°")
+              .font(.caption2)
+              .minimumScaleFactor(0.7)
+          }
+          .frame(maxWidth: .infinity)
+        }
+      }
+    }
   }
 
   private var currentDecibelText: String {

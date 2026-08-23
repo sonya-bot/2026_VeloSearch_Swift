@@ -398,26 +398,21 @@ struct AnalyzeView: View {
         let isLandscape = geometry.size.width > geometry.size.height
         Group {
           if isLandscape {
-            HStack(spacing: 12) {
+            MeasurementLandscapeLayout { _ in
               VStack(spacing: 8) {
                 analyzeStatusPanel
                 Spacer(minLength: 0)
                 measurementButton
                 Spacer(minLength: 0)
               }
-              .frame(width: (geometry.size.width - 12) / 3)
-
+            } trailingContent: { _ in
               VStack(spacing: 8) {
-                AudioRouteStatusButton(
-                  audioIOController: audioIOController,
-                  displayMode: .compact
-                )
+                AudioRouteStatusButton(audioIOController: audioIOController)
                 measurementSettings(isCompact: true)
                 waveformSection
                   .frame(height: waveformDisplayCount >= 2 ? 62 : 38)
                 responseGraph
               }
-              .frame(width: (geometry.size.width - 12) * 2 / 3)
             }
           } else {
             VStack(spacing: 8) {
@@ -431,10 +426,10 @@ struct AnalyzeView: View {
                 measurementButton
               }
             }
+            .padding(.horizontal, MeasurementLayoutMetrics.horizontalPadding)
+            .padding(.bottom, 8)
           }
         }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 8)
       }
       .background(Color(uiColor: .systemGroupedBackground))
       .navigationTitle("Analyze")

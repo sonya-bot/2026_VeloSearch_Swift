@@ -1,30 +1,9 @@
 import AVFoundation
 import SwiftUI
 
-enum AudioRouteStatusDisplayMode {
-  case regular
-  case compact
-
-  var height: CGFloat {
-    switch self {
-    case .regular: return 96
-    case .compact: return 66
-    }
-  }
-}
-
 struct AudioRouteStatusButton: View {
   @ObservedObject var audioIOController: AudioIOController
-  let displayMode: AudioRouteStatusDisplayMode
   @State private var isPresented = false
-
-  init(
-    audioIOController: AudioIOController,
-    displayMode: AudioRouteStatusDisplayMode = .regular
-  ) {
-    self.audioIOController = audioIOController
-    self.displayMode = displayMode
-  }
 
   var body: some View {
     Button {
@@ -55,11 +34,12 @@ struct AudioRouteStatusButton: View {
           detail: configuration.channelDetail
         )
       }
-      .frame(height: displayMode.height)
+      .frame(height: 66)
       .background(Color(uiColor: .secondarySystemGroupedBackground))
-      .clipShape(RoundedRectangle(cornerRadius: 16))
+      .clipShape(RoundedRectangle(cornerRadius: 14))
     }
     .buttonStyle(.plain)
+    .frame(maxWidth: .infinity)
     .accessibilityLabel("Audio I/Oの状態")
     .sheet(isPresented: $isPresented) {
       AudioRouteStatusView(audioIOController: audioIOController)
@@ -78,25 +58,19 @@ struct AudioRouteStatusButton: View {
     value: String,
     detail: String?
   ) -> some View {
-    VStack(spacing: displayMode == .compact ? 2 : 4) {
+    VStack(spacing: 2) {
       Text(title)
         .font(.caption2)
         .foregroundStyle(.secondary)
       HStack(spacing: 4) {
         Image(systemName: icon)
-          .font(displayMode == .compact ? .caption : .title3)
+          .font(.caption)
         Text(value)
-          .font(displayMode == .compact ? .caption : .subheadline.weight(.semibold))
+          .font(.caption)
           .lineLimit(1)
           .minimumScaleFactor(0.7)
       }
-      if displayMode == .regular, let detail {
-        Text(detail)
-          .font(.caption2)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .minimumScaleFactor(0.7)
-      } else if displayMode == .compact, let detail {
+      if let detail {
         Text(detail)
           .font(.caption2)
           .foregroundStyle(.secondary)
