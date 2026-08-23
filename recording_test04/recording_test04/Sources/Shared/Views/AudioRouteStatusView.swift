@@ -1,9 +1,30 @@
 import AVFoundation
 import SwiftUI
 
+enum AudioRouteStatusDisplayMode {
+  case regular
+  case compact
+
+  var height: CGFloat {
+    switch self {
+    case .regular: return 96
+    case .compact: return 66
+    }
+  }
+}
+
 struct AudioRouteStatusButton: View {
   @ObservedObject var audioIOController: AudioIOController
+  let displayMode: AudioRouteStatusDisplayMode
   @State private var isPresented = false
+
+  init(
+    audioIOController: AudioIOController,
+    displayMode: AudioRouteStatusDisplayMode = .regular
+  ) {
+    self.audioIOController = audioIOController
+    self.displayMode = displayMode
+  }
 
   var body: some View {
     Button {
@@ -34,7 +55,7 @@ struct AudioRouteStatusButton: View {
           detail: configuration.channelDetail
         )
       }
-      .frame(height: 96)
+      .frame(height: displayMode.height)
       .background(Color(uiColor: .secondarySystemGroupedBackground))
       .clipShape(RoundedRectangle(cornerRadius: 16))
     }
@@ -57,22 +78,30 @@ struct AudioRouteStatusButton: View {
     value: String,
     detail: String?
   ) -> some View {
-    VStack(spacing: 4) {
+    VStack(spacing: displayMode == .compact ? 2 : 4) {
       Text(title)
         .font(.caption2)
         .foregroundStyle(.secondary)
-      Image(systemName: icon)
-        .font(.title3)
-      Text(value)
-        .font(.subheadline.weight(.semibold))
-        .lineLimit(1)
-        .minimumScaleFactor(0.7)
-      if let detail {
+      HStack(spacing: 4) {
+        Image(systemName: icon)
+          .font(displayMode == .compact ? .caption : .title3)
+        Text(value)
+          .font(displayMode == .compact ? .caption : .subheadline.weight(.semibold))
+          .lineLimit(1)
+          .minimumScaleFactor(0.7)
+      }
+      if displayMode == .regular, let detail {
         Text(detail)
           .font(.caption2)
           .foregroundStyle(.secondary)
           .lineLimit(1)
           .minimumScaleFactor(0.7)
+      } else if displayMode == .compact, let detail {
+        Text(detail)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .minimumScaleFactor(0.6)
       }
     }
     .frame(maxWidth: .infinity)

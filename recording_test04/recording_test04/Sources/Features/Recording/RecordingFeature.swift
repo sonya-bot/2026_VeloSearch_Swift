@@ -373,36 +373,39 @@ struct RecordingView: View {
         if verticalSizeClass == .compact {
           // 【横画面レイアウト】
           GeometryReader { geometry in
-            let bottomPadding = geometry.safeAreaInsets.bottom + 16
-            let meterWidth = min(220, max(160, geometry.size.width * 0.28))
+            let meterWidth = min(340, max(150, geometry.size.width * 0.36))
 
-            HStack(spacing: 30) {
+            HStack(spacing: 16) {
               VStack(spacing: 10) {
                 timeDisplay
                 recordingStatus
-                Spacer()
+                Spacer(minLength: 0)
                 recordButton
-                  .padding(.bottom, bottomPadding)
-                Spacer()
+                Spacer(minLength: 0)
               }
-              .frame(width: (geometry.size.width - 30) / 3)
+              .frame(width: (geometry.size.width - 16) / 3)
 
-              VStack(spacing: 10) {
-                AudioRouteStatusButton(audioIOController: audioIOController)
+              VStack(spacing: 8) {
+                AudioRouteStatusButton(
+                  audioIOController: audioIOController,
+                  displayMode: .compact
+                )
                 MeasurementDestinationPicker(
                   recordingFileStore: recordingFileStore,
                   selection: $selectedScene,
                   isDisabled: audioRecorder.isRecording
                 )
                 horizontalStereoMeters(width: meterWidth, height: 24)
-                // Spacer()
+                  .frame(maxWidth: .infinity, maxHeight: .infinity)
+                  .background(Color(uiColor: .secondarySystemGroupedBackground))
+                  .clipShape(RoundedRectangle(cornerRadius: 14))
               }
-              .padding(.bottom, bottomPadding)
-              .frame(width: (geometry.size.width - 30) * 2 / 3)
+              .frame(width: (geometry.size.width - 16) * 2 / 3)
             }
             .frame(maxHeight: .infinity)
           }
-          .padding()
+          .padding(.horizontal, 16)
+          .padding(.vertical, 8)
         } else {
           // 【縦画面レイアウト】
           GeometryReader { geometry in
@@ -522,40 +525,31 @@ struct RecordingView: View {
 
   // 録音ボタン
   private var recordButton: some View {
-    Button {
+    MeasurementControlButton(
+      idleTitle: "Record",
+      activeTitle: "Stop",
+      isActive: audioRecorder.isRecording,
+      tint: .red,
+      isDisabled: !audioRecorder.isRecording && audioConfigurationIssue != nil
+    ) {
       if audioRecorder.isRecording {
         audioRecorder.stopRecording()
       } else {
-        // @AppStorage で読み込んだ設定値を渡して録音を開始
         audioRecorder.startRecording(
           orientation: selectedOrientation,
           micSource: selectedMicSource,
-          prefix: "Recording"  //録音ファイルの接頭辞は "Recording" に固定
+          prefix: "Recording"
         )
       }
-    } label: {
-      ZStack {
-        Circle()
-          .strokeBorder(Color.primary.opacity(0.2), lineWidth: 4)
-          .frame(width: 70, height: 70)
-        if audioRecorder.isRecording {
-          RoundedRectangle(cornerRadius: 8)
-            .fill(Color.red)
-            .frame(width: 30, height: 30)
-        } else {
-          Circle()
-            .fill(Color.red)
-            .frame(width: 60, height: 60)
-        }
-      }
     }
-    .disabled(!audioRecorder.isRecording && audioConfigurationIssue != nil)
     .overlay(alignment: .top) {
       if !audioRecorder.isRecording, let audioConfigurationIssue {
         Text(audioConfigurationIssue)
           .font(.caption2)
           .foregroundStyle(.red)
-          .offset(y: -24)
+          .fixedSize(horizontal: false, vertical: true)
+          .frame(width: 220)
+          .offset(y: -32)
       }
     }
   }

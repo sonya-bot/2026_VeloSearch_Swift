@@ -89,9 +89,6 @@ struct SettingsView: View {
   @ObservedObject private var audioIOController: AudioIOController
   @AppStorage("isNoiseFilterEnabled") private var isNoiseFilterEnabled = false
   @AppStorage("warningSoundID") private var selectedSoundID: Int = 1052
-  @AppStorage("deviceOrientation") private var selectedOrientation: DeviceOrientationOption =
-    .landscapeRight
-  @AppStorage("micSource") private var selectedMicSource: MicSourceOption = .back
   @AppStorage("isMonitoringEnabled") private var isMonitoringEnabled = false
   @AppStorage("selectedMonitoringSound") private var selectedTestSound = MonitoringSoundSource
     .sweep5Seconds
@@ -151,32 +148,6 @@ struct SettingsView: View {
               Spacer()
               Text(audioIOController.activeConfiguration.channelLabel)
                 .foregroundStyle(.secondary)
-            }
-          }
-
-          // 端末の向き設定
-          Picker(selection: $selectedOrientation) {
-            ForEach(DeviceOrientationOption.allCases) { option in
-              Text(option.rawValue).tag(option)
-            }
-          } label: {
-            HStack(spacing: 12) {
-              SettingsIconView(
-                systemName: selectedOrientation == .portrait
-                  ? "rectangle.portrait.rotate" : "rectangle.landscape.rotate", color: .blue
-              )
-              Text("端末の向き")
-            }
-          }
-
-          // ペアマイク設定（Audio I/Oからも同じ設定へ遷移できる）
-          NavigationLink(destination: MicSourceSettingView()) {
-            HStack(spacing: 12) {
-              SettingsIconView(systemName: "mic.fill", color: .orange)
-              Text("ペアマイク")
-              Spacer()
-              Text(selectedMicSource.rawValue)
-                .foregroundColor(.secondary)
             }
           }
 

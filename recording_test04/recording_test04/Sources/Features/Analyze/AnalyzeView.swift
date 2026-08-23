@@ -400,27 +400,36 @@ struct AnalyzeView: View {
           if isLandscape {
             HStack(spacing: 12) {
               VStack(spacing: 8) {
+                analyzeStatusPanel
+                Spacer(minLength: 0)
+                measurementButton
+                Spacer(minLength: 0)
+              }
+              .frame(width: (geometry.size.width - 12) / 3)
+
+              VStack(spacing: 8) {
+                AudioRouteStatusButton(
+                  audioIOController: audioIOController,
+                  displayMode: .compact
+                )
+                measurementSettings(isCompact: true)
                 waveformSection
-                  .frame(height: waveformDisplayCount >= 2 ? 90 : 52)
+                  .frame(height: waveformDisplayCount >= 2 ? 62 : 38)
                 responseGraph
               }
-              .frame(maxWidth: .infinity, maxHeight: .infinity)
-              VStack(spacing: 8) {
-                AudioRouteStatusButton(audioIOController: audioIOController)
-                measurementSettings
-                Spacer(minLength: 0)
-                runControls
-              }
-              .frame(width: min(330, geometry.size.width * 0.38))
+              .frame(width: (geometry.size.width - 12) * 2 / 3)
             }
           } else {
             VStack(spacing: 8) {
               AudioRouteStatusButton(audioIOController: audioIOController)
-              measurementSettings
+              measurementSettings(isCompact: false)
               waveformSection
                 .frame(height: waveformDisplayCount >= 2 ? 120 : 70)
               responseGraph
-              runControls
+              HStack(spacing: 12) {
+                analyzeStatusPanel
+                measurementButton
+              }
             }
           }
         }
@@ -433,29 +442,48 @@ struct AnalyzeView: View {
     }
   }
 
-  private var measurementSettings: some View {
-    VStack(spacing: 7) {
-      MeasurementDestinationPicker(
-        recordingFileStore: recordingFileStore,
-        selection: $selectedScene,
-        isDisabled: controller.isRunning
-      )
-      HStack(spacing: 8) {
+  @ViewBuilder
+  private func measurementSettings(isCompact: Bool) -> some View {
+    if isCompact {
+      HStack(spacing: 6) {
+        MeasurementDestinationPicker(
+          recordingFileStore: recordingFileStore,
+          selection: $selectedScene,
+          isDisabled: controller.isRunning
+        )
         MeasurementDirectionPicker(selection: $directionTag, isDisabled: controller.isRunning)
-        Stepper("回数  \(repeatCount)", value: $repeatCount, in: 1...99)
-          .disabled(controller.isRunning)
-          .padding(.horizontal, 12)
-          .frame(height: 42)
-          .background(Color(uiColor: .secondarySystemGroupedBackground))
-          .clipShape(RoundedRectangle(cornerRadius: 10))
+        repeatStepper
       }
-      Text("所要時間 約 \(estimatedSeconds) 秒")
-        .font(.caption)
-        .foregroundStyle(.secondary)
+    } else {
+      VStack(spacing: 7) {
+        MeasurementDestinationPicker(
+          recordingFileStore: recordingFileStore,
+          selection: $selectedScene,
+          isDisabled: controller.isRunning
+        )
+        HStack(spacing: 8) {
+          MeasurementDirectionPicker(selection: $directionTag, isDisabled: controller.isRunning)
+          repeatStepper
+        }
+        Text("所要時間 約 \(estimatedSeconds) 秒")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
     }
   }
 
-  private var runControls: some View {
+  private var repeatStepper: some View {
+    Stepper("回数  \(repeatCount)", value: $repeatCount, in: 1...99)
+      .disabled(controller.isRunning)
+      .lineLimit(1)
+      .minimumScaleFactor(0.7)
+      .padding(.horizontal, 10)
+      .frame(height: 48)
+      .background(Color(uiColor: .secondarySystemGroupedBackground))
+      .clipShape(RoundedRectangle(cornerRadius: 10))
+  }
+
+  private var analyzeStatusPanel: some View {
     VStack(spacing: 6) {
       Text(controller.state.title)
         .font(.headline)
@@ -481,21 +509,27 @@ struct AnalyzeView: View {
           .foregroundStyle(.red)
           .multilineTextAlignment(.center)
       }
-      Button(controller.isRunning ? "Stop" : "Start") {
-        if controller.isRunning {
-          controller.stop()
-        } else {
-          controller.start(repeatCount: repeatCount, directionTag: directionTag)
-        }
+    }
+    .padding(10)
+    .frame(maxWidth: .infinity)
+    .background(Color(uiColor: .secondarySystemGroupedBackground))
+    .clipShape(RoundedRectangle(cornerRadius: 12))
+  }
+
+  private var measurementButton: some View {
+    MeasurementControlButton(
+      idleTitle: "Start",
+      activeTitle: "Stop",
+      isActive: controller.isRunning,
+      tint: .red,
+      isDisabled: !controller.isRunning
+        && audioIOController.configurationIssue(allowsPlayback: true) != nil
+    ) {
+      if controller.isRunning {
+        controller.stop()
+      } else {
+        controller.start(repeatCount: repeatCount, directionTag: directionTag)
       }
-      .buttonStyle(.borderedProminent)
-      .tint(controller.isRunning ? .red : .blue)
-      .controlSize(.large)
-      .frame(maxWidth: .infinity)
-      .disabled(
-        !controller.isRunning
-          && audioIOController.configurationIssue(allowsPlayback: true) != nil
-      )
     }
   }
 

@@ -3,8 +3,8 @@ import Combine
 import Foundation
 
 enum InputDeviceOption: String, CaseIterable, Identifiable {
-  case builtIn = "iPhone本体"
-  case external = "接続デバイス"
+  case builtIn = "iPhone"
+  case external = "connected device"
 
   var id: Self { self }
 
@@ -14,8 +14,8 @@ enum InputDeviceOption: String, CaseIterable, Identifiable {
 }
 
 enum OutputDeviceOption: String, CaseIterable, Identifiable {
-  case speaker = "iPhone本体"
-  case external = "接続デバイス"
+  case speaker = "iPhone"
+  case external = "connected device"
 
   var id: Self { self }
 
@@ -33,15 +33,15 @@ enum RecordingChannelMode: String, CaseIterable, Identifiable {
 }
 
 enum DeviceOrientationOption: String, CaseIterable, Identifiable {
-  case portrait = "縦"
-  case landscapeRight = "横"
+  case portrait = "Portrait"
+  case landscapeRight = "Landscape"
 
   var id: Self { self }
 }
 
 enum MicSourceOption: String, CaseIterable, Identifiable {
-  case back = "背面"
-  case front = "前面"
+  case back = "Back"
+  case front = "Front"
 
   var id: Self { self }
 }

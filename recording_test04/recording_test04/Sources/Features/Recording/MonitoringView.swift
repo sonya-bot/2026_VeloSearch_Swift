@@ -61,32 +61,35 @@ struct MonitoringView: View {
         if verticalSizeClass == .compact {
           // 【横画面レイアウト】
           GeometryReader { geometry in
-            let bottomPadding = geometry.safeAreaInsets.bottom + 16
-            let meterWidth = min(220, max(160, geometry.size.width * 0.28))
+            let meterWidth = min(340, max(150, geometry.size.width * 0.36))
 
-            HStack(spacing: 30) {
+            HStack(spacing: 16) {
               VStack(spacing: 10) {
                 timeDisplay
                 monitoringStatus
-                Spacer()
+                Spacer(minLength: 0)
                 recordButton
-                  .padding(.bottom, bottomPadding)
-                Spacer()
+                Spacer(minLength: 0)
               }
-              .frame(width: (geometry.size.width - 30) / 3)
+              .frame(width: (geometry.size.width - 16) / 3)
 
-              VStack(spacing: 10) {
-                AudioRouteStatusButton(audioIOController: audioIOController)
-                measurementSettings
+              VStack(spacing: 8) {
+                AudioRouteStatusButton(
+                  audioIOController: audioIOController,
+                  displayMode: .compact
+                )
+                measurementSettings(isCompact: true)
                 horizontalStereoMeters(width: meterWidth, height: 24)
-                // Spacer()
+                  .frame(maxWidth: .infinity, maxHeight: .infinity)
+                  .background(Color(uiColor: .secondarySystemGroupedBackground))
+                  .clipShape(RoundedRectangle(cornerRadius: 14))
               }
-              .padding(.bottom, bottomPadding)
-              .frame(width: (geometry.size.width - 30) * 2 / 3)
+              .frame(width: (geometry.size.width - 16) * 2 / 3)
             }
             .frame(maxHeight: .infinity)
           }
-          .padding()
+          .padding(.horizontal, 16)
+          .padding(.vertical, 8)
         } else {
           // 【縦画面レイアウト】
           GeometryReader { geometry in
@@ -95,7 +98,7 @@ struct MonitoringView: View {
 
             VStack(spacing: 10) {
               AudioRouteStatusButton(audioIOController: audioIOController)
-              measurementSettings
+              measurementSettings(isCompact: false)
               VStack(spacing: 8) {
                 timeDisplay
                 monitoringStatus
@@ -146,38 +149,60 @@ struct MonitoringView: View {
     return "\(audioMonitor.measurementStatus) · \(currentRepeat) / \(repeatCount)"
   }
 
-  private var measurementSettings: some View {
-    VStack(spacing: 8) {
-      MeasurementDestinationPicker(
-        recordingFileStore: recordingFileStore,
-        selection: $selectedScene,
-        isDisabled: isRepeatSequenceActive
-      )
-      HStack(spacing: 8) {
+  @ViewBuilder
+  private func measurementSettings(isCompact: Bool) -> some View {
+    if isCompact {
+      HStack(spacing: 6) {
+        MeasurementDestinationPicker(
+          recordingFileStore: recordingFileStore,
+          selection: $selectedScene,
+          isDisabled: isRepeatSequenceActive
+        )
         MeasurementDirectionPicker(
           selection: $directionTag,
           isDisabled: isRepeatSequenceActive
         )
-        Stepper(value: $repeatCount, in: 1...99) {
-          Text("Repeat \(repeatCount)")
-            .font(.subheadline)
-            .monospacedDigit()
-        }
-        .disabled(isRepeatSequenceActive)
-        .padding(.horizontal, 12)
-        .frame(height: 42)
-        .background(Color(uiColor: .secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        repeatStepper
       }
-      Text("所要時間 約 \(estimatedDurationSeconds) 秒")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-      if let issue = audioIOController.configurationIssue(allowsPlayback: true) {
-        Text(issue)
-          .font(.caption2)
-          .foregroundStyle(.red)
+    } else {
+      VStack(spacing: 8) {
+        MeasurementDestinationPicker(
+          recordingFileStore: recordingFileStore,
+          selection: $selectedScene,
+          isDisabled: isRepeatSequenceActive
+        )
+        HStack(spacing: 8) {
+          MeasurementDirectionPicker(
+            selection: $directionTag,
+            isDisabled: isRepeatSequenceActive
+          )
+          repeatStepper
+        }
+        Text("所要時間 約 \(estimatedDurationSeconds) 秒")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        if let issue = audioIOController.configurationIssue(allowsPlayback: true) {
+          Text(issue)
+            .font(.caption2)
+            .foregroundStyle(.red)
+        }
       }
     }
+  }
+
+  private var repeatStepper: some View {
+    Stepper(value: $repeatCount, in: 1...99) {
+      Text("Repeat \(repeatCount)")
+        .font(.subheadline)
+        .monospacedDigit()
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+    }
+    .disabled(isRepeatSequenceActive)
+    .padding(.horizontal, 10)
+    .frame(height: 48)
+    .background(Color(uiColor: .secondarySystemGroupedBackground))
+    .clipShape(RoundedRectangle(cornerRadius: 10))
   }
 
   // ステレオメーター部分(縦画面)
@@ -240,7 +265,14 @@ struct MonitoringView: View {
 
   // 録音ボタン
   private var recordButton: some View {
-    Button {
+    MeasurementControlButton(
+      idleTitle: "Start",
+      activeTitle: "Stop",
+      isActive: isRepeatSequenceActive,
+      tint: .red,
+      isDisabled: !isRepeatSequenceActive
+        && audioIOController.configurationIssue(allowsPlayback: true) != nil
+    ) {
       if isRepeatSequenceActive {
         isRepeatSequenceActive = false
         repeatTransitionTask?.cancel()
@@ -249,26 +281,7 @@ struct MonitoringView: View {
       } else {
         startRepeatSequence()
       }
-    } label: {
-      ZStack {
-        Circle()
-          .strokeBorder(Color.primary.opacity(0.2), lineWidth: 4)
-          .frame(width: 70, height: 70)
-        if audioMonitor.isRecording {
-          RoundedRectangle(cornerRadius: 8)
-            .fill(Color.red)
-            .frame(width: 30, height: 30)
-        } else {
-          Circle()
-            .fill(Color.red)
-            .frame(width: 60, height: 60)
-        }
-      }
     }
-    .disabled(
-      !isRepeatSequenceActive
-        && audioIOController.configurationIssue(allowsPlayback: true) != nil
-    )
   }
 
   private func startRepeatSequence() {

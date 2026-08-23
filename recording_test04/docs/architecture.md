@@ -34,9 +34,9 @@ AppRootView ─── AppRootViewModel
 
 1. Detectings
 2. RecordingsまたはMonitorings
-3. Collections
-4. Settings
-5. Analyze
+3. Analyze
+4. Collections
+5. Settings
 
 ### AppRootViewModel
 
@@ -59,7 +59,7 @@ AppRootView ─── AppRootViewModel
 
 | Feature | 主な責務 |
 | --- | --- |
-| Detection | 検知セッションの状態、レーダー表示、Ground Truth入力を管理します。 |
+| Detection | 検知セッションの状態、レーダー、方向確率、共通テスト音源の再生を管理します。 |
 | Recording | 通常録音、レベル表示、保存先選択を管理します。 |
 | Monitoring | テスト音源を使った録音と自動停止を管理します。 |
 | Analyze | ESS測定、IR・周波数応答解析、反復実行を管理します。 |

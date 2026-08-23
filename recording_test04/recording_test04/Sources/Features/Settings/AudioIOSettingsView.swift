@@ -65,12 +65,16 @@ struct AudioIOSettingsView: View {
           }
           .pickerStyle(.navigationLink)
 
-          Picker("使用マイク", selection: $micSource) {
-            ForEach(MicSourceOption.allCases) { option in
-              Text(option.rawValue).tag(option)
+          if channelMode == .stereo {
+            NavigationLink(destination: MicSourceSettingView()) {
+              HStack {
+                Text("マイク構成")
+                Spacer()
+                Text(microphoneConfigurationLabel)
+                  .foregroundStyle(.secondary)
+              }
             }
           }
-          .pickerStyle(.navigationLink)
         }
       } header: {
         Text("Input")
@@ -92,6 +96,10 @@ struct AudioIOSettingsView: View {
       return "\(configuration.channelLabel) · \(detail)"
     }
     return configuration.channelLabel
+  }
+
+  private var microphoneConfigurationLabel: String {
+    micSource == .back ? "Back + Bottom" : "Front + Bottom"
   }
 
   private func routeRow(title: String, value: String, systemImage: String) -> some View {

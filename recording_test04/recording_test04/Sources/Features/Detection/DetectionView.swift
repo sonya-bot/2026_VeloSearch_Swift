@@ -941,9 +941,12 @@ struct DetectionView: View {
               .frame(width: (geometry.size.width - 16) / 3)
 
               VStack(spacing: 8) {
-                AudioRouteStatusButton(audioIOController: audioIOController)
+                AudioRouteStatusButton(
+                  audioIOController: audioIOController,
+                  displayMode: .compact
+                )
                 measurementSettings
-                Spacer(minLength: 0)
+                detectionDetails
               }
               .frame(width: (geometry.size.width - 16) * 2 / 3)
             }
@@ -1057,7 +1060,13 @@ struct DetectionView: View {
   }
 
   private var controlButton: some View {
-    Button(action: {
+    MeasurementControlButton(
+      idleTitle: "Start",
+      activeTitle: "Stop",
+      isActive: detection.isRecording,
+      tint: .red,
+      isDisabled: false
+    ) {
       withAnimation(.spring()) {
         if detection.isRecording {
           detection.stopDetecting()
@@ -1067,41 +1076,85 @@ struct DetectionView: View {
             micSource: selectedMicSource, directionTag: directionTag)
         }
       }
-    }) {
-      Text(detection.isRecording ? "Stop" : "Start")
-        .font(.headline)
-        .foregroundStyle(.white)
-        .frame(width: 72, height: 72)
-        .background(detection.isRecording ? Color.red : Color.blue)
-        .clipShape(Circle())
-        .overlay(Circle().stroke(Color.primary.opacity(0.25), lineWidth: 4))
     }
-    .sensoryFeedback(.impact(flexibility: .solid), trigger: detection.isRecording)
   }
 
   private var testButton: some View {
-    Button {
+    MeasurementControlButton(
+      idleTitle: "Test",
+      activeTitle: "Stop Test",
+      isActive: detection.isTestSoundPlaying,
+      tint: .orange,
+      isDisabled: false
+    ) {
       detection.toggleTestSound(selectedTestSound)
-    } label: {
-      Text(detection.isTestSoundPlaying ? "Stop Test" : "Test")
-        .font(.headline)
-        .foregroundStyle(.white)
-        .minimumScaleFactor(0.7)
-        .frame(width: 72, height: 72)
-        .background(Color.orange)
-        .clipShape(Circle())
-        .overlay(Circle().stroke(Color.primary.opacity(0.25), lineWidth: 4))
     }
   }
 
   private var actionButtons: some View {
     HStack(spacing: 0) {
-      testButton
-        .frame(maxWidth: .infinity)
       controlButton
         .frame(maxWidth: .infinity)
+      testButton
+        .frame(maxWidth: .infinity)
     }
-    .frame(height: 76)
+    .frame(height: 80)
+  }
+
+  private var detectionDetails: some View {
+    VStack(spacing: 8) {
+      HStack {
+        Text("Detection probability")
+          .font(.headline)
+        Spacer()
+        Text(formatElapsedTime(detection.elapsedTime))
+          .monospacedDigit()
+        Text(currentDecibelText)
+          .monospacedDigit()
+      }
+      .font(.caption)
+
+      GeometryReader { geometry in
+        HStack(alignment: .bottom, spacing: 6) {
+          ForEach(0..<8, id: \.self) { index in
+            let probability =
+              detection.currentDirectionProbabilities.indices.contains(index)
+              ? detection.currentDirectionProbabilities[index] : 0
+            VStack(spacing: 3) {
+              Spacer(minLength: 0)
+              RoundedRectangle(cornerRadius: 4)
+                .fill(Color.blue)
+                .frame(
+                  height: max(
+                    2,
+                    (geometry.size.height - 34)
+                      * min(max(CGFloat(probability), 0), 1)
+                  )
+                )
+              Text("\(index * 45)°")
+                .font(.caption2)
+                .minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity)
+          }
+        }
+      }
+    }
+    .padding(12)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color(uiColor: .secondarySystemGroupedBackground))
+    .clipShape(RoundedRectangle(cornerRadius: 14))
+  }
+
+  private var currentDecibelText: String {
+    let decibels = detection.currentDecibel <= -160 ? 0 : detection.currentDecibel
+    return String(format: "%.1f dB", decibels)
+  }
+
+  private func formatElapsedTime(_ time: TimeInterval) -> String {
+    let minutes = Int(time) / 60
+    let seconds = Int(time) % 60
+    return String(format: "%02d:%02d", minutes, seconds)
   }
 }
 

@@ -32,8 +32,7 @@ struct MeasurementDirectionPicker: View {
     } label: {
       compactSettingRow(
         title: "方向タグ",
-        value: selection.label,
-        systemImage: "location.north.circle.fill"
+        value: selection.label
       )
     }
     .disabled(isDisabled)
@@ -55,7 +54,7 @@ struct MeasurementDestinationPicker: View {
         }
       }
     } label: {
-      compactSettingRow(title: "保存先", value: selection, systemImage: "folder.fill")
+      compactSettingRow(title: "保存先", value: selection)
     }
     .disabled(isDisabled)
     .onAppear(perform: refresh)
@@ -75,22 +74,25 @@ struct MeasurementDestinationPicker: View {
   }
 }
 
-private func compactSettingRow(title: String, value: String, systemImage: String) -> some View {
-  HStack(spacing: 10) {
-    Image(systemName: systemImage)
-      .foregroundStyle(.blue)
+private func compactSettingRow(title: String, value: String) -> some View {
+  VStack(alignment: .leading, spacing: 3) {
     Text(title)
-      .foregroundStyle(.primary)
-    Spacer()
-    Text(value)
+      .font(.caption)
       .foregroundStyle(.secondary)
-      .lineLimit(1)
-    Image(systemName: "chevron.up.chevron.down")
-      .font(.caption2)
-      .foregroundStyle(.secondary)
+    HStack(spacing: 6) {
+      Text(value)
+        .foregroundStyle(.primary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+      Spacer(minLength: 2)
+      Image(systemName: "chevron.up.chevron.down")
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+    }
   }
-  .padding(.horizontal, 14)
-  .frame(height: 42)
+  .padding(.horizontal, 12)
+  .frame(maxWidth: .infinity, alignment: .leading)
+  .frame(height: 48)
   .background(Color(uiColor: .secondarySystemGroupedBackground))
   .clipShape(RoundedRectangle(cornerRadius: 10))
 }
