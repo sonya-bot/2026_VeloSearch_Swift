@@ -33,6 +33,7 @@ Recordings、ONの場合はMonitoringsになり、Analyzeは独立したタブ�
 - macOS
 - Xcode
 - Tuist 4系
+- iOS 18.0以降
 - iOS実機（マイク、ステレオ入力、位置情報を含む動作確認に必要）
 
 外部Swift Packageには依存していません。SwiftUI、AVFoundation、Core ML、Core Location、
@@ -106,14 +107,15 @@ recording_test04/
 - [アーキテクチャ](docs/architecture.md)
 - [検知・音源定位](docs/detection.md)
 - [録音・モニタリング](docs/recording-and-monitoring.md)
+- [音響特性測定](docs/analyze.md)
 - [Scene・保存・再生](docs/storage-and-playback.md)
 - [設定](docs/settings.md)
 - [開発・テスト](docs/development.md)
 
 ## 保存データ
 
-録音、CSV、JSON、IRはアプリのDocuments配下へ保存されます。初回起動時に`Default`フォルダを作成し、
-ユーザーが作成したSceneは同じ階層のフォルダとして管理されます。
+録音、CSV、JSON、IRはアプリのDocuments配下へ保存されます。全計測タブで保存先を選択でき、
+初回起動時に作成する`Default`と、ユーザーが作成したSceneを同じ階層で管理します。
 
 ```text
 Documents/
@@ -128,6 +130,7 @@ Documents/
 
 - Noise Filterは設定UIのみで、音声処理にはまだ反映されません。
 - テスト音源の選択画面には、現在リソースが同梱されている音源だけを表示します。
+- Audio I/Oモーダルは全計測タブ共通の表示専用UIです。設定変更はSettingsで行います。
 - マイク構成やステレオ入力の可否は端末によって異なるため、主要機能は実機で確認してください。
 
 これらは`recording_test03`との挙動互換性を維持するため、現在は変更していません。

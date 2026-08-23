@@ -25,6 +25,10 @@ xcodebuild \
 
 マイク、ステレオ入力、Audio Session route、位置情報、警告音は実機でも確認してください。
 
+本プロジェクトはiOSアプリです。`-destination platform=macOS`ではなく、iOS Simulatorまたは
+iOS実機を指定します。Simulator向けの確認では上記のように署名を無効化できます。実機へ
+インストールする場合は、XcodeのSigning & CapabilitiesでDevelopment Teamを設定してください。
+
 ## テスト
 
 ```bash
@@ -42,8 +46,11 @@ xcodebuild \
 - 日付と連番による録音URL生成
 - 選択中Sceneの名称変更
 - WAV削除時の通常CSV／Dev CSV連動削除
+- WAV改名時の通常CSV／Dev CSV連動改名
 - 共有形式ごとの対象ファイル分類
+- Dev CSVの更新日時順ソート
 - AppRootViewModelによるモニタリング設定反映
+- ESS解析結果の有限性と1 kHz正規化
 
 ストレージテストは一時ディレクトリと専用UserDefaults suiteを使用し、実際のDocumentsや
 ユーザー設定を変更しません。
@@ -59,6 +66,7 @@ xcrun swift-format format \
   recording_test04/Tests
 
 xcrun swift-format lint \
+  --strict \
   --recursive \
   Project.swift \
   recording_test04/Sources \
@@ -71,10 +79,22 @@ Swiftファイルは原則として1行120文字以内に保ちます。
 
 - Viewにファイル、データベース、Core ML、Core Locationへの直接アクセスを追加しないこと。
 - 必須依存関係は`AppDependencies`またはFeatureのinitializerから注入すること。
+- 画面状態はViewModel／Controller、外部アクセスはRepository／Service／Writerへ分離すること。
+- 同じ目的のViewや操作ボタンはSharedまたはFeature内の共通部品を再利用すること。
 - 保存ファイル名、UserDefaultsキー、CSV列を変更するときは既存データの移行を検討すること。
 - 音声処理のサンプルレート、チャンネル数、特徴量順序をモデルの学習条件と一致させること。
 - 新しい業務ロジックや不具合修正には、外部から観測できる振る舞いのテストを追加すること。
 - 一時的な`print`を残さず、必要なログは`AppLogger`を使用すること。
+
+## UI回帰確認
+
+計測画面を変更した場合は、縦画面と横画面の両方で確認します。
+
+- Settings以外の各タブで縦スクロールを発生させないこと。
+- 横画面で全要素が表示範囲に収まり、左右カラムの位置関係が計測タブ間で揃うこと。
+- Audio I/O表示の位置、外形、モーダルサイズが計測タブ間で揃うこと。
+- Start／Stopなど同一機能のボタンが共通コンポーネントを使用していること。
+- 実行中に保存先、方向タグ、反復回数を変更できないこと。
 
 ## 音源の追加
 

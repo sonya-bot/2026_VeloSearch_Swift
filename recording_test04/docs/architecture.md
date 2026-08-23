@@ -14,6 +14,7 @@ AppRootView ─── AppRootViewModel
         │
         ├── Detection Feature
         ├── Recording / Monitoring Feature
+        ├── Analyze Feature
         ├── Collections / Player Feature
         └── Settings Feature
                  │
@@ -54,6 +55,7 @@ AppRootView ─── AppRootViewModel
 - `AudioIOController`
 - `LocationService`
 - `AudioPreviewController`
+- `AnalyzeResultWriting`
 
 本番では`AppDependencies.live`を使用し、テストでは専用の依存関係へ差し替えられます。
 
@@ -73,6 +75,17 @@ AppRootView ─── AppRootViewModel
 長時間継続する処理はObservableなControllerが状態を公開し、Viewはその状態を表示します。
 Monitoringsの反復回数、カウントダウン、ターム遷移は`MonitoringSequenceController`が管理します。
 
+巨大なFeatureを単一ファイルへ集約せず、次の単位へ分割します。
+
+- View：レイアウトと操作の宣言
+- ViewModel／Controller：画面状態、計測シーケンス、ユーザー操作の調停
+- Service：録音、再生、解析、Core ML、位置情報などのOS・計算処理
+- Repository／Writer：ファイル名、Scene、CSV、JSON、WAV、ZIPの永続化
+
+DetectionのControllerは音声処理、方向推定、ログをextensionファイルへ分割しています。
+Analyzeの計測、解析、結果出力、Playerの再生、付帯情報、CollectionsのScene内録音管理も
+それぞれ独立した型で扱います。
+
 ## Infrastructure層
 
 ### Audio
@@ -81,6 +94,7 @@ Monitoringsの反復回数、カウントダウン、ターム遷移は`Monitori
 - `BeepDetector`：Goertzel法を用いてビープ帯域を検出します。
 - `DirectionModelService`：Core MLモデルを読み込み、8方向の確率を返します。
 - `AudioPreviewController`：設定画面で選択した警告音とテスト音源を共通の経路で試聴します。
+- `ESSAnalyzer`：録音信号とESSからIR、周波数応答を算出します。
 
 ### Location
 
@@ -89,19 +103,22 @@ Monitoringsの反復回数、カウントダウン、ターム遷移は`Monitori
 ### Storage
 
 `RecordingFileStoring`がFeature層から見えるインターフェースです。
-`RecordingFileStore`がDocuments、Scene、録音、CSV、ZIPを管理します。
+`RecordingFileStore`がDocuments、Scene、録音、関連ファイルの改名・削除、CSV読み込みを管理し、
+`StoredZIPWriter`が共有用ZIPを生成します。Analyze固有のCSV、JSON、IR出力は
+`AnalyzeResultWriting`を介して`AnalyzeResultWriter`が担当します。
 
 ## Shared層
 
 - `AppLogger`：OSLogのカテゴリを一元化します。
 - `CSVPreviewView`：Dev CSVを表形式で表示します。
+- `CSVPreviewViewModel`：RepositoryからCSVを読み込み、表示用の行へ変換します。
 - `MeasurementLandscapeLayout`：各計測タブの横画面カラム位置を統一します。
 - `MeasurementControlButton`：計測開始・停止ボタンの外形と状態表現を統一します。
 
 ## 依存方向
 
 - ViewからFileManager、Core MLモデル、Core Locationを直接操作しません。
-- Featureは`RecordingFileStoring`を通して保存処理を行います。
+- Featureは`RecordingFileStoring`や専用Writerを通して保存処理を行います。
 - 具体的な依存関係はアプリルートで生成し、各画面へ注入します。
 - テストでは一時Documentsと専用UserDefaults suiteを使用します。
 

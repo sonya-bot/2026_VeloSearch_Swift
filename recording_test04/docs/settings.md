@@ -32,7 +32,12 @@ Detect判定時に選択されたSystem Sound IDを使用します。連続し�
 
 入出力デバイスと録音形式は全タブ共通です。入力・出力はiPhoneまたは接続デバイス、録音形式は
 Automatic／Mono／Stereoから選択します。現在成立している経路は各タブ共通の表示専用モーダルで
-確認できます。実行できない組み合わせでは設定を自動変更せず、開始操作を無効にします。
+確認できます。実行できない組み合わせでも設定値は自動変更せず、対応画面では開始操作を無効化するか、
+開始時にエラーとして扱います。
+
+計測タブ側のAudio I/O表示は設定操作を持ちません。出力、入力、Formatをアイコンと接続方式で
+表示し、iPhone入力では端末向きをアイコンで区別します。Stereo時だけチャンネル詳細を表示し、
+iPhone入力では`Back + Bottom`または`Front + Bottom`、外部入力では`L / R`とします。
 
 端末の向きとマイク構成もこの画面へ統合します。iPhone入力時のみ端末の向きを表示し、
 iPhoneかつStereo指定時のみマイク構成への導線を表示します。Settings直下には重複項目を
@@ -41,16 +46,16 @@ iPhoneかつStereo指定時のみマイク構成への導線を表示します�
 #### 端末の向き
 
 - キー：`deviceOrientation`
-- 初期値：横
-- 選択肢：縦、横
+- 初期値：`Landscape`
+- 選択肢：`Portrait`、`Landscape`
 
 AVAudioSessionの入力orientationへ反映します。
 
 #### マイク構成
 
 - キー：`micSource`
-- 初期値：背面
-- 選択肢：背面、前面
+- 初期値：`Back`
+- 選択肢：`Back`、`Front`
 
 底面マイクと、選択した前面または背面マイクの組み合わせを表示します。外部入力ではこの設定を
 使用せず、StereoチャンネルをL/Rとして扱います。
@@ -65,16 +70,16 @@ ONにするとルート画面の2番目のタブがRecordingsからMonitorings�
 #### 録音デバイス
 
 - キー：`selectedInputDevice`
-- 初期値：iPhone本体
-- 選択肢：iPhone本体、接続デバイス
+- 初期値：`iPhone`
+- 選択肢：`iPhone`、`External`
 
 Detectingsは機能要件としてiPhoneのステレオ入力を使用し、その他の計測機能は共通設定を使用します。
 
 #### 再生デバイス
 
 - キー：`selectedOutputDevice`
-- 初期値：iPhone本体
-- 選択肢：iPhone本体、接続デバイス
+- 初期値：`iPhone`
+- 選択肢：`iPhone`、`External`
 
 接続経路が成立しない場合も設定値を変更せず、計測開始前にエラーとして表示します。
 
