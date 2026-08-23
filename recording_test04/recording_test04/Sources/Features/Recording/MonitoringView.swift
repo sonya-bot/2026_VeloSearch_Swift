@@ -180,18 +180,10 @@ struct MonitoringView: View {
   }
 
   private var repeatStepper: some View {
-    Stepper(value: $repeatCount, in: 1...99) {
-      Text("Repeat \(repeatCount)")
-        .font(.subheadline)
-        .monospacedDigit()
-        .lineLimit(1)
-        .minimumScaleFactor(0.7)
-    }
-    .disabled(sequenceController.isRepeatSequenceActive)
-    .padding(.horizontal, 10)
-    .frame(height: 48)
-    .background(Color(uiColor: .secondarySystemGroupedBackground))
-    .clipShape(RoundedRectangle(cornerRadius: 10))
+    MeasurementRepeatStepper(
+      repeatCount: $repeatCount,
+      isDisabled: sequenceController.isRepeatSequenceActive
+    )
   }
 
   // ステレオメーター部分(縦画面)

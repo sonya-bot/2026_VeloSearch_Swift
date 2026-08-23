@@ -119,14 +119,10 @@ struct AnalyzeView: View {
   }
 
   private var repeatStepper: some View {
-    Stepper("回数  \(repeatCount)", value: $repeatCount, in: 1...99)
-      .disabled(controller.isRunning)
-      .lineLimit(1)
-      .minimumScaleFactor(0.7)
-      .padding(.horizontal, 10)
-      .frame(height: 48)
-      .background(Color(uiColor: .secondarySystemGroupedBackground))
-      .clipShape(RoundedRectangle(cornerRadius: 10))
+    MeasurementRepeatStepper(
+      repeatCount: $repeatCount,
+      isDisabled: controller.isRunning
+    )
   }
 
   private var analyzeStatusPanel: some View {

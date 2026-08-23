@@ -5,8 +5,9 @@ enum AnalyzeConstants {
   static let minimumFrequency = 20.0
   static let maximumFrequency = 20_000.0
   static let sweepDuration = 30.0
+  static let sweepAmplitude = 0.95
   static let preSilenceDuration = 1.0
-  static let postSilenceDuration = 2.0
+  static let postSilenceDuration = 1.0
   static let countdownSeconds = 3
   static let repeatIntervalSeconds = 3
 }
@@ -138,12 +139,10 @@ final class ESSMeasurementService {
     return (0..<frameCount).map { frameIndex in
       let time = Double(frameIndex) / sampleRate
       let phase = phaseScale * (exp(time * logarithmicRatio / AnalyzeConstants.sweepDuration) - 1)
-      let fadeFrames = max(Int(sampleRate * 0.02), 1)
-      let fadeIn = min(Double(frameIndex) / Double(fadeFrames), 1)
-      let fadeOut = min(Double(frameCount - frameIndex - 1) / Double(fadeFrames), 1)
-      return Float(0.25 * min(fadeIn, fadeOut) * sin(phase))
+      return Float(AnalyzeConstants.sweepAmplitude * sin(phase))
     }
   }
+
 }
 
 enum AnalyzeError: LocalizedError {
