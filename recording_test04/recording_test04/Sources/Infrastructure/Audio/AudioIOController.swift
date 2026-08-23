@@ -33,10 +33,10 @@ final class AudioIOController: ObservableObject {
     let inputOption = selectedInputOption(requiresBuiltInInput: requiresBuiltInInput)
     let inputs = audioSession.availableInputs ?? []
     guard !inputs.isEmpty else { return nil }
-    let input = inputs.first {
+    let inputIsAvailable = inputs.contains {
       inputOption == .builtIn ? $0.portType == .builtInMic : $0.portType != .builtInMic
     }
-    guard let input else { return "選択した入力デバイスが接続されていません。" }
+    guard inputIsAvailable else { return "選択した入力デバイスが接続されていません。" }
 
     let channelMode = selectedChannelMode(requiresStereo: requiresStereo)
     let maximumChannelCount = audioSession.maximumInputNumberOfChannels
@@ -50,11 +50,6 @@ final class AudioIOController: ObservableObject {
         output.portType != .builtInSpeaker
       else {
         return "外部出力をiOSのオーディオ経路で選択してください。"
-      }
-      let isBluetoothOutput = [.bluetoothA2DP, .bluetoothHFP, .bluetoothLE].contains(
-        output.portType)
-      if input.portType == .usbAudio && isBluetoothOutput {
-        return "Bluetooth出力とUSB入力の同時使用には対応していません。"
       }
     }
     return nil
