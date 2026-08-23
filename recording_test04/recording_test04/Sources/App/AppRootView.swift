@@ -16,10 +16,11 @@ struct AppRootView: View {
 
   var body: some View {
     TabView(selection: $viewModel.selectedTab) {
-      Tab("Detectings", systemImage: "waveform", value: 0) {
+      Tab("Detectings", systemImage: "scope", value: 0) {
         DetectionView(
           recordingFileStore: dependencies.recordingFileStore,
-          audioIOController: dependencies.audioIOController
+          audioIOController: dependencies.audioIOController,
+          locationService: dependencies.locationService
         )
       }
 
@@ -35,7 +36,8 @@ struct AppRootView: View {
         AnalyzeView(
           recordingFileStore: dependencies.recordingFileStore,
           userDefaults: dependencies.userDefaults,
-          audioIOController: dependencies.audioIOController
+          audioIOController: dependencies.audioIOController,
+          resultWriter: dependencies.analyzeResultWriter
         )
       }
 
@@ -49,7 +51,8 @@ struct AppRootView: View {
       Tab("Settings", systemImage: "gearshape", value: 4) {
         SettingsView(
           recordingFileStore: dependencies.recordingFileStore,
-          audioIOController: dependencies.audioIOController
+          audioIOController: dependencies.audioIOController,
+          audioPreviewController: dependencies.audioPreviewController
         )
       }
 

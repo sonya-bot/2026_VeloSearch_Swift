@@ -1,6 +1,59 @@
 import AVFoundation
 import SwiftUI
 
+private enum AudioRouteStatusColumnStyle {
+  case summary
+  case modal
+}
+
+private struct AudioRouteStatusColumn: View {
+  let title: String
+  let icon: String
+  let value: String
+  let detail: String?
+  let style: AudioRouteStatusColumnStyle
+
+  var body: some View {
+    VStack(spacing: style == .summary ? 2 : 5) {
+      Text(title)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+
+      if style == .summary {
+        HStack(spacing: 4) {
+          Image(systemName: icon)
+            .font(.caption)
+          valueText
+        }
+      } else {
+        Image(systemName: icon)
+          .font(.title2)
+        valueText
+        Text(detail ?? " ")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+      }
+
+      if style == .summary, let detail {
+        Text(detail)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .minimumScaleFactor(0.6)
+      }
+    }
+    .frame(maxWidth: .infinity)
+  }
+
+  private var valueText: some View {
+    Text(value)
+      .font(.caption)
+      .lineLimit(1)
+      .minimumScaleFactor(0.7)
+  }
+}
+
 struct AudioRouteStatusButton: View {
   @ObservedObject var audioIOController: AudioIOController
   @State private var isPresented = false
@@ -12,26 +65,29 @@ struct AudioRouteStatusButton: View {
     } label: {
       let configuration = audioIOController.activeConfiguration
       HStack(spacing: 0) {
-        statusColumn(
+        AudioRouteStatusColumn(
           title: "Output",
           icon: configuration.outputIconName,
           value: configuration.outputConnection,
-          detail: nil
+          detail: nil,
+          style: .summary
         )
         Divider()
-        statusColumn(
+        AudioRouteStatusColumn(
           title: "Input",
           icon: configuration.inputIconName,
           value: configuration.inputConnection,
           detail: configuration.isBuiltInInput
-            ? configuration.orientation.rawValue : nil
+            ? configuration.orientation.rawValue : nil,
+          style: .summary
         )
         Divider()
-        statusColumn(
+        AudioRouteStatusColumn(
           title: "Format",
           icon: configuration.channelIconName,
           value: configuration.channelLabel,
-          detail: configuration.channelDetail
+          detail: configuration.channelDetail,
+          style: .summary
         )
       }
       .frame(height: 66)
@@ -52,34 +108,6 @@ struct AudioRouteStatusButton: View {
     }
   }
 
-  private func statusColumn(
-    title: String,
-    icon: String,
-    value: String,
-    detail: String?
-  ) -> some View {
-    VStack(spacing: 2) {
-      Text(title)
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-      HStack(spacing: 4) {
-        Image(systemName: icon)
-          .font(.caption)
-        Text(value)
-          .font(.caption)
-          .lineLimit(1)
-          .minimumScaleFactor(0.7)
-      }
-      if let detail {
-        Text(detail)
-          .font(.caption2)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .minimumScaleFactor(0.6)
-      }
-    }
-    .frame(maxWidth: .infinity)
-  }
 }
 
 struct AudioRouteStatusView: View {
@@ -92,25 +120,28 @@ struct AudioRouteStatusView: View {
         .font(.headline)
 
       HStack(spacing: 0) {
-        statusColumn(
+        AudioRouteStatusColumn(
           title: "Output",
           icon: configuration.outputIconName,
           value: configuration.outputConnection,
-          detail: nil
+          detail: nil,
+          style: .modal
         )
         Divider()
-        statusColumn(
+        AudioRouteStatusColumn(
           title: "Input",
           icon: configuration.inputIconName,
           value: configuration.inputConnection,
-          detail: nil
+          detail: nil,
+          style: .modal
         )
         Divider()
-        statusColumn(
+        AudioRouteStatusColumn(
           title: "Format",
           icon: configuration.channelIconName,
           value: configuration.channelLabel,
-          detail: configuration.channelDetail
+          detail: configuration.channelDetail,
+          style: .modal
         )
       }
       .frame(height: 102)
@@ -124,26 +155,4 @@ struct AudioRouteStatusView: View {
     }
   }
 
-  private func statusColumn(
-    title: String,
-    icon: String,
-    value: String,
-    detail: String?
-  ) -> some View {
-    VStack(spacing: 5) {
-      Text(title)
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-      Image(systemName: icon)
-        .font(.title2)
-      Text(value)
-        .font(.caption)
-        .lineLimit(1)
-      Text(detail ?? " ")
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-    }
-    .frame(maxWidth: .infinity)
-  }
 }

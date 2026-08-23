@@ -40,16 +40,29 @@ struct MeasurementDirectionPicker: View {
 }
 
 struct MeasurementDestinationPicker: View {
-  let recordingFileStore: RecordingFileStoring
   @Binding var selection: String
   let isDisabled: Bool
-  @State private var scenes: [String] = []
+  @StateObject private var viewModel: MeasurementDestinationPickerViewModel
+
+  init(
+    recordingFileStore: RecordingFileStoring,
+    selection: Binding<String>,
+    isDisabled: Bool
+  ) {
+    _selection = selection
+    self.isDisabled = isDisabled
+    _viewModel = StateObject(
+      wrappedValue: MeasurementDestinationPickerViewModel(
+        recordingFileStore: recordingFileStore
+      )
+    )
+  }
 
   var body: some View {
     Menu {
       Picker("保存先", selection: $selection) {
         Text(RecordingFileStore.defaultSceneName).tag(RecordingFileStore.defaultSceneName)
-        ForEach(scenes, id: \.self) { scene in
+        ForEach(viewModel.scenes, id: \.self) { scene in
           Text(scene).tag(scene)
         }
       }
@@ -57,19 +70,8 @@ struct MeasurementDestinationPicker: View {
       compactSettingRow(title: "保存先", value: selection)
     }
     .disabled(isDisabled)
-    .onAppear(perform: refresh)
-  }
-
-  private func refresh() {
-    do {
-      try recordingFileStore.prepareStorage()
-      scenes = recordingFileStore.sceneDirectories().map(\.lastPathComponent)
-      if selection != RecordingFileStore.defaultSceneName && !scenes.contains(selection) {
-        selection = RecordingFileStore.defaultSceneName
-      }
-    } catch {
-      scenes = []
-      selection = RecordingFileStore.defaultSceneName
+    .onAppear {
+      selection = viewModel.refreshedSelection(from: selection)
     }
   }
 }

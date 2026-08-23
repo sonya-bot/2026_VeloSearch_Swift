@@ -1,4 +1,3 @@
-import AVFoundation
 import Foundation
 import Observation
 import SwiftUI
@@ -23,6 +22,7 @@ struct MonitoringView: View {
   private let recordingFileStore: RecordingFileStoring
   @ObservedObject private var audioIOController: AudioIOController
   @State private var audioMonitor: AudioMonitoringController
+  @State private var sequenceController: MonitoringSequenceController
   @Environment(\.verticalSizeClass) var verticalSizeClass
 
   @AppStorage("deviceOrientation") private var selectedOrientation: String = "横"
@@ -31,10 +31,6 @@ struct MonitoringView: View {
     .defaultSceneName
   @AppStorage("measurementDirectionTag") private var directionTag: MeasurementDirectionTag = .none
   @AppStorage("monitoringRepeatCount") private var repeatCount = 1
-  @State private var currentRepeat = 0
-  @State private var isRepeatSequenceActive = false
-  @State private var repeatTransitionTask: Task<Void, Never>?
-  @State private var countdownValue: Int?
 
   init(
     recordingFileStore: RecordingFileStoring,
@@ -43,12 +39,14 @@ struct MonitoringView: View {
   ) {
     self.recordingFileStore = recordingFileStore
     self.audioIOController = audioIOController
-    _audioMonitor = State(
-      initialValue: AudioMonitoringController(
-        recordingFileStore: recordingFileStore,
-        userDefaults: userDefaults,
-        audioIOController: audioIOController
-      )
+    let audioMonitor = AudioMonitoringController(
+      recordingFileStore: recordingFileStore,
+      userDefaults: userDefaults,
+      audioIOController: audioIOController
+    )
+    _audioMonitor = State(initialValue: audioMonitor)
+    _sequenceController = State(
+      initialValue: MonitoringSequenceController(audioMonitor: audioMonitor)
     )
   }
 
@@ -108,7 +106,7 @@ struct MonitoringView: View {
       .navigationTitle("Monitorings")
       .navigationBarTitleDisplayMode(.inline)
       .onDisappear {
-        repeatTransitionTask?.cancel()
+        sequenceController.cancelPendingTransition()
       }
     }
   }
@@ -132,9 +130,12 @@ struct MonitoringView: View {
   }
 
   private var repeatStatus: String {
-    guard isRepeatSequenceActive else { return audioMonitor.measurementStatus }
-    if let countdownValue { return "開始まで \(countdownValue) · \(currentRepeat) / \(repeatCount)" }
-    return "\(audioMonitor.measurementStatus) · \(currentRepeat) / \(repeatCount)"
+    guard sequenceController.isRepeatSequenceActive else { return audioMonitor.measurementStatus }
+    if let countdownValue = sequenceController.countdownValue {
+      return "開始まで \(countdownValue) · \(sequenceController.currentRepeat) / \(repeatCount)"
+    }
+    return
+      "\(audioMonitor.measurementStatus) · \(sequenceController.currentRepeat) / \(repeatCount)"
   }
 
   @ViewBuilder
@@ -144,11 +145,11 @@ struct MonitoringView: View {
         MeasurementDestinationPicker(
           recordingFileStore: recordingFileStore,
           selection: $selectedScene,
-          isDisabled: isRepeatSequenceActive
+          isDisabled: sequenceController.isRepeatSequenceActive
         )
         MeasurementDirectionPicker(
           selection: $directionTag,
-          isDisabled: isRepeatSequenceActive
+          isDisabled: sequenceController.isRepeatSequenceActive
         )
         repeatStepper
       }
@@ -157,12 +158,12 @@ struct MonitoringView: View {
         MeasurementDestinationPicker(
           recordingFileStore: recordingFileStore,
           selection: $selectedScene,
-          isDisabled: isRepeatSequenceActive
+          isDisabled: sequenceController.isRepeatSequenceActive
         )
         HStack(spacing: 8) {
           MeasurementDirectionPicker(
             selection: $directionTag,
-            isDisabled: isRepeatSequenceActive
+            isDisabled: sequenceController.isRepeatSequenceActive
           )
           repeatStepper
         }
@@ -186,7 +187,7 @@ struct MonitoringView: View {
         .lineLimit(1)
         .minimumScaleFactor(0.7)
     }
-    .disabled(isRepeatSequenceActive)
+    .disabled(sequenceController.isRepeatSequenceActive)
     .padding(.horizontal, 10)
     .frame(height: 48)
     .background(Color(uiColor: .secondarySystemGroupedBackground))
@@ -256,71 +257,22 @@ struct MonitoringView: View {
     MeasurementControlButton(
       idleTitle: "Start",
       activeTitle: "Stop",
-      isActive: isRepeatSequenceActive,
+      isActive: sequenceController.isRepeatSequenceActive,
       tint: .red,
-      isDisabled: !isRepeatSequenceActive
+      isDisabled: !sequenceController.isRepeatSequenceActive
         && audioIOController.configurationIssue(allowsPlayback: true) != nil
     ) {
-      if isRepeatSequenceActive {
-        isRepeatSequenceActive = false
-        repeatTransitionTask?.cancel()
-        countdownValue = nil
-        audioMonitor.stopRecording()
-      } else {
-        startRepeatSequence()
-      }
-    }
-  }
-
-  private func startRepeatSequence() {
-    currentRepeat = 1
-    isRepeatSequenceActive = true
-    startCurrentRepeat()
-  }
-
-  private func startCurrentRepeat() {
-    repeatTransitionTask = Task { @MainActor in
-      for seconds in stride(from: 3, through: 1, by: -1) {
-        countdownValue = seconds
-        try? await Task.sleep(for: .seconds(1))
-        guard !Task.isCancelled, isRepeatSequenceActive else { return }
-      }
-      countdownValue = nil
-      audioMonitor.startRecording(
+      sequenceController.toggleSequence(
+        repeatCount: repeatCount,
         orientation: selectedOrientation,
         micSource: selectedMicSource,
-        prefix: "Monitoring",
-        directionTag: directionTag == .none ? nil : directionTag.rawValue
-      ) {
-        Task { @MainActor in
-          guard isRepeatSequenceActive else { return }
-          guard currentRepeat < repeatCount else {
-            isRepeatSequenceActive = false
-            return
-          }
-          repeatTransitionTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(3))
-            guard !Task.isCancelled, isRepeatSequenceActive else { return }
-            currentRepeat += 1
-            startCurrentRepeat()
-          }
-        }
-      }
-      if !audioMonitor.isRecording {
-        isRepeatSequenceActive = false
-      }
+        directionTag: directionTag
+      )
     }
   }
 
   private var estimatedDurationSeconds: Int {
-    let soundRawValue =
-      UserDefaults.standard.string(forKey: "selectedMonitoringSound")
-      ?? MonitoringSoundSource.sweep5Seconds.rawValue
-    let sound = MonitoringSoundSource(rawValue: soundRawValue) ?? .sweep5Seconds
-    let duration =
-      Bundle.main.url(forResource: sound.fileName, withExtension: "wav")
-      .flatMap { try? AVAudioPlayer(contentsOf: $0).duration } ?? 0
-    return Int(ceil(duration)) * repeatCount + 3 * repeatCount + 3 * max(repeatCount - 1, 0)
+    audioMonitor.estimatedMonitoringDurationSeconds(repeatCount: repeatCount)
   }
 
   private func formatElapsedTime(_ time: TimeInterval) -> String {

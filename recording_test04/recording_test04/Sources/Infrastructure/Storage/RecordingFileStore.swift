@@ -1,78 +1,5 @@
 import Foundation
 
-protocol RecordingFileStoring: AnyObject {
-  var documentsDirectory: URL { get }
-  var defaultDirectory: URL { get }
-
-  func prepareStorage() throws
-  func sceneDirectories() -> [URL]
-  func recordings(in directory: URL) -> [URL]
-  func selectedDirectory() throws -> URL
-  func makeRecordingURL(prefix: String, date: Date) throws -> (baseName: String, url: URL)
-  func nextSequenceNumber(prefix: String, dateString: String, in directory: URL) -> Int
-  @discardableResult func createScene(named rawName: String) throws -> URL
-  @discardableResult func renameScene(at sceneURL: URL, to rawName: String) throws -> URL
-  func deleteScene(at sceneURL: URL) throws
-  func deleteRecording(at audioURL: URL) throws
-  func shareableFiles(in sceneURL: URL, type: SceneShareType) -> [URL]
-  func createShareArchive(sceneURL: URL, type: SceneShareType) throws -> URL
-  func allDevCSVFiles() -> [URL]
-}
-
-extension RecordingFileStoring {
-  func makeRecordingURL(prefix: String) throws -> (baseName: String, url: URL) {
-    try makeRecordingURL(prefix: prefix, date: Date())
-  }
-}
-
-enum RecordingFileStoreError: LocalizedError {
-  case invalidSceneName
-  case reservedSceneName
-  case duplicateSceneName
-  case missingScene
-  case noShareableFiles
-  case archiveTooLarge
-
-  var errorDescription: String? {
-    switch self {
-    case .invalidSceneName:
-      return [
-        "Scene名を入力してください。",
-        "使用できない文字が含まれていないか確認してください。",
-      ].joined()
-    case .reservedSceneName:
-      return "DefaultはScene名として使用できません。"
-    case .duplicateSceneName:
-      return "同じ名前のSceneが既に存在します。"
-    case .missingScene:
-      return "Sceneが見つかりません。"
-    case .noShareableFiles:
-      return "共有できるファイルがありません。"
-    case .archiveTooLarge:
-      return "共有するファイルがZIPの上限を超えています。"
-        + "対象を分けて共有してください。"
-    }
-  }
-}
-
-enum SceneShareType: String, CaseIterable, Identifiable {
-  case wav = "WAV"
-  case csv = "CSV"
-  case devCSV = "Dev CSV"
-  case all = "すべて"
-
-  var id: Self { self }
-
-  var archiveLabel: String {
-    switch self {
-    case .wav: return "WAV"
-    case .csv: return "CSV"
-    case .devCSV: return "DevCSV"
-    case .all: return "All"
-    }
-  }
-}
-
 /// Sceneフォルダ、Default、録音ファイルの命名規則を一元管理する。
 final class RecordingFileStore: RecordingFileStoring {
   static let shared = RecordingFileStore()
@@ -255,6 +182,29 @@ final class RecordingFileStore: RecordingFileStoring {
     }
   }
 
+  @discardableResult
+  func renameRecording(at audioURL: URL, to rawBaseName: String) throws -> URL {
+    let baseName = rawBaseName
+    let oldBaseName = audioURL.deletingPathExtension().lastPathComponent
+    guard baseName != oldBaseName else { return audioURL }
+
+    let directory = audioURL.deletingLastPathComponent()
+    let renamedAudioURL = directory.appendingPathComponent(baseName).appendingPathExtension(
+      audioURL.pathExtension)
+    try fileManager.moveItem(at: audioURL, to: renamedAudioURL)
+
+    let relatedNames = [
+      ("\(oldBaseName).csv", "\(baseName).csv"),
+      ("Dev_\(oldBaseName).csv", "Dev_\(baseName).csv"),
+    ]
+    for (oldName, newName) in relatedNames {
+      let sourceURL = directory.appendingPathComponent(oldName)
+      guard fileManager.fileExists(atPath: sourceURL.path) else { continue }
+      try fileManager.moveItem(at: sourceURL, to: directory.appendingPathComponent(newName))
+    }
+    return renamedAudioURL
+  }
+
   func shareableFiles(in sceneURL: URL, type: SceneShareType) -> [URL] {
     let files =
       (try? fileManager.contentsOfDirectory(
@@ -298,12 +248,28 @@ final class RecordingFileStore: RecordingFileStoring {
     return directories.flatMap { directory in
       ((try? fileManager.contentsOfDirectory(
         at: directory,
-        includingPropertiesForKeys: nil,
+        includingPropertiesForKeys: [.contentModificationDateKey],
         options: [.skipsHiddenFiles]
       )) ?? []).filter {
         $0.pathExtension.lowercased() == "csv" && $0.lastPathComponent.hasPrefix("Dev_")
       }
-    }.sorted { $0.lastPathComponent > $1.lastPathComponent }
+    }.sorted { lhs, rhs in
+      let lhsDate = try? lhs.resourceValues(forKeys: [.contentModificationDateKey])
+        .contentModificationDate
+      let rhsDate = try? rhs.resourceValues(forKeys: [.contentModificationDateKey])
+        .contentModificationDate
+      return (lhsDate ?? .distantPast) > (rhsDate ?? .distantPast)
+    }
+  }
+
+  func csvContents(at url: URL) throws -> String {
+    try String(contentsOf: url, encoding: .utf8)
+  }
+
+  func directoryExists(at url: URL) -> Bool {
+    var isDirectory = ObjCBool(false)
+    return fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
+      && isDirectory.boolValue
   }
 
   private func sceneExists(named name: String) -> Bool {
@@ -422,120 +388,3 @@ final class RecordingFileStore: RecordingFileStoring {
 }
 
 /// 外部ライブラリに依存せず、共有用の無圧縮ZIPを生成する。
-private enum StoredZIPWriter {
-  private struct Entry {
-    let nameData: Data
-    let crc32: UInt32
-    let size: UInt32
-    let offset: UInt32
-  }
-
-  static func write(files: [URL], to destination: URL) throws {
-    FileManager.default.createFile(atPath: destination.path, contents: nil)
-    let output = try FileHandle(forWritingTo: destination)
-    defer { try? output.close() }
-
-    var currentOffset: UInt32 = 0
-    var entries: [Entry] = []
-
-    for file in files {
-      let nameData = Data(file.lastPathComponent.utf8)
-      let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
-      let fileSize = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
-      guard fileSize <= UInt32.max, nameData.count <= UInt16.max else {
-        throw RecordingFileStoreError.archiveTooLarge
-      }
-      let size = UInt32(fileSize)
-      let checksum = try crc32(file)
-
-      var header = Data()
-      appendUInt32(0x0403_4b50, to: &header)
-      appendUInt16(20, to: &header)
-      appendUInt16(0x0800, to: &header)  // UTF-8 file name
-      appendUInt16(0, to: &header)  // Stored (no compression)
-      appendUInt16(0, to: &header)
-      appendUInt16(0, to: &header)
-      appendUInt32(checksum, to: &header)
-      appendUInt32(size, to: &header)
-      appendUInt32(size, to: &header)
-      appendUInt16(UInt16(nameData.count), to: &header)
-      appendUInt16(0, to: &header)
-      header.append(nameData)
-      try output.write(contentsOf: header)
-
-      let input = try FileHandle(forReadingFrom: file)
-      while let chunk = try input.read(upToCount: 1_048_576), !chunk.isEmpty {
-        try output.write(contentsOf: chunk)
-      }
-      try input.close()
-
-      entries.append(Entry(nameData: nameData, crc32: checksum, size: size, offset: currentOffset))
-      let nextOffset = UInt64(currentOffset) + UInt64(header.count) + UInt64(size)
-      guard nextOffset <= UInt32.max else { throw RecordingFileStoreError.archiveTooLarge }
-      currentOffset = UInt32(nextOffset)
-    }
-
-    guard entries.count <= UInt16.max else { throw RecordingFileStoreError.archiveTooLarge }
-    let centralDirectoryOffset = currentOffset
-    var centralDirectory = Data()
-    for entry in entries {
-      appendUInt32(0x0201_4b50, to: &centralDirectory)
-      appendUInt16(20, to: &centralDirectory)
-      appendUInt16(20, to: &centralDirectory)
-      appendUInt16(0x0800, to: &centralDirectory)
-      appendUInt16(0, to: &centralDirectory)
-      appendUInt16(0, to: &centralDirectory)
-      appendUInt16(0, to: &centralDirectory)
-      appendUInt32(entry.crc32, to: &centralDirectory)
-      appendUInt32(entry.size, to: &centralDirectory)
-      appendUInt32(entry.size, to: &centralDirectory)
-      appendUInt16(UInt16(entry.nameData.count), to: &centralDirectory)
-      appendUInt16(0, to: &centralDirectory)
-      appendUInt16(0, to: &centralDirectory)
-      appendUInt16(0, to: &centralDirectory)
-      appendUInt16(0, to: &centralDirectory)
-      appendUInt32(0, to: &centralDirectory)
-      appendUInt32(entry.offset, to: &centralDirectory)
-      centralDirectory.append(entry.nameData)
-    }
-
-    try output.write(contentsOf: centralDirectory)
-    var footer = Data()
-    appendUInt32(0x0605_4b50, to: &footer)
-    appendUInt16(0, to: &footer)
-    appendUInt16(0, to: &footer)
-    appendUInt16(UInt16(entries.count), to: &footer)
-    appendUInt16(UInt16(entries.count), to: &footer)
-    appendUInt32(UInt32(centralDirectory.count), to: &footer)
-    appendUInt32(centralDirectoryOffset, to: &footer)
-    appendUInt16(0, to: &footer)
-    try output.write(contentsOf: footer)
-  }
-
-  private static func crc32(_ file: URL) throws -> UInt32 {
-    var crc: UInt32 = 0xffff_ffff
-    let input = try FileHandle(forReadingFrom: file)
-    while let chunk = try input.read(upToCount: 1_048_576), !chunk.isEmpty {
-      for byte in chunk {
-        crc ^= UInt32(byte)
-        for _ in 0..<8 {
-          crc = (crc >> 1) ^ ((crc & 1) == 1 ? 0xedb8_8320 : 0)
-        }
-      }
-    }
-    try input.close()
-    return crc ^ 0xffff_ffff
-  }
-
-  private static func appendUInt16(_ value: UInt16, to data: inout Data) {
-    data.append(UInt8(value & 0xff))
-    data.append(UInt8((value >> 8) & 0xff))
-  }
-
-  private static func appendUInt32(_ value: UInt32, to data: inout Data) {
-    data.append(UInt8(value & 0xff))
-    data.append(UInt8((value >> 8) & 0xff))
-    data.append(UInt8((value >> 16) & 0xff))
-    data.append(UInt8((value >> 24) & 0xff))
-  }
-}

@@ -52,6 +52,8 @@ AppRootView ─── AppRootViewModel
 - `UserDefaults`
 - `NotificationCenter`
 - `AudioIOController`
+- `LocationService`
+- `AudioPreviewController`
 
 本番では`AppDependencies.live`を使用し、テストでは専用の依存関係へ差し替えられます。
 
@@ -69,6 +71,7 @@ AppRootView ─── AppRootViewModel
 
 `CollectionsViewModel`などのViewModelは画面状態と操作を保持します。録音、再生、検知のように
 長時間継続する処理はObservableなControllerが状態を公開し、Viewはその状態を表示します。
+Monitoringsの反復回数、カウントダウン、ターム遷移は`MonitoringSequenceController`が管理します。
 
 ## Infrastructure層
 
@@ -77,6 +80,7 @@ AppRootView ─── AppRootViewModel
 - `AudioFeatureExtractor`：ステレオ音声からCore ML入力特徴量を生成します。
 - `BeepDetector`：Goertzel法を用いてビープ帯域を検出します。
 - `DirectionModelService`：Core MLモデルを読み込み、8方向の確率を返します。
+- `AudioPreviewController`：設定画面で選択した警告音とテスト音源を共通の経路で試聴します。
 
 ### Location
 
@@ -91,6 +95,8 @@ AppRootView ─── AppRootViewModel
 
 - `AppLogger`：OSLogのカテゴリを一元化します。
 - `CSVPreviewView`：Dev CSVを表形式で表示します。
+- `MeasurementLandscapeLayout`：各計測タブの横画面カラム位置を統一します。
+- `MeasurementControlButton`：計測開始・停止ボタンの外形と状態表現を統一します。
 
 ## 依存方向
 

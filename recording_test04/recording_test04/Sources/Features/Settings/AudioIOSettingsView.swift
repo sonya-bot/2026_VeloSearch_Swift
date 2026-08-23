@@ -1,13 +1,20 @@
 import SwiftUI
 
 struct AudioIOSettingsView: View {
-  @ObservedObject var audioIOController: AudioIOController
-  @AppStorage("selectedInputDevice") private var inputDevice: InputDeviceOption = .builtIn
-  @AppStorage("selectedOutputDevice") private var outputDevice: OutputDeviceOption = .speaker
-  @AppStorage("recordingChannelMode") private var channelMode: RecordingChannelMode = .automatic
-  @AppStorage("deviceOrientation") private var orientation: DeviceOrientationOption =
-    .landscapeRight
-  @AppStorage("micSource") private var micSource: MicSourceOption = .back
+  @ObservedObject private var audioIOController: AudioIOController
+  @AppStorage(SettingsStorageKey.selectedInputDevice) private var inputDevice =
+    InputDeviceOption.builtIn
+  @AppStorage(SettingsStorageKey.selectedOutputDevice) private var outputDevice =
+    OutputDeviceOption.speaker
+  @AppStorage(SettingsStorageKey.recordingChannelMode) private var channelMode =
+    RecordingChannelMode.automatic
+  @AppStorage(SettingsStorageKey.deviceOrientation) private var orientation =
+    DeviceOrientationOption.landscapeRight
+  @AppStorage(SettingsStorageKey.micSource) private var micSource = MicSourceOption.back
+
+  init(audioIOController: AudioIOController) {
+    self.audioIOController = audioIOController
+  }
 
   var body: some View {
     Form {

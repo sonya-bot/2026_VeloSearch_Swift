@@ -71,6 +71,36 @@ struct RecordingFileStoreTests {
   }
 
   @Test
+  func renamingRecordingMovesAudioAndCompanionCSVFilesTogether() throws {
+    let context = try makeTestContext()
+    try context.store.prepareStorage()
+    let oldBaseName = "Recording_20260821_01"
+    let newBaseName = "Bridge_Angle090_Take1"
+    let audioURL = context.store.defaultDirectory.appendingPathComponent("\(oldBaseName).wav")
+    let csvURL = context.store.defaultDirectory.appendingPathComponent("\(oldBaseName).csv")
+    let devCSVURL = context.store.defaultDirectory.appendingPathComponent("Dev_\(oldBaseName).csv")
+    for fileURL in [audioURL, csvURL, devCSVURL] {
+      try Data().write(to: fileURL)
+    }
+
+    let renamedURL = try context.store.renameRecording(at: audioURL, to: newBaseName)
+
+    #expect(renamedURL.lastPathComponent == "\(newBaseName).wav")
+    #expect(context.fileManager.fileExists(atPath: renamedURL.path))
+    #expect(
+      context.fileManager.fileExists(
+        atPath: context.store.defaultDirectory.appendingPathComponent("\(newBaseName).csv").path
+      )
+    )
+    #expect(
+      context.fileManager.fileExists(
+        atPath: context.store.defaultDirectory.appendingPathComponent("Dev_\(newBaseName).csv").path
+      )
+    )
+    #expect(!context.fileManager.fileExists(atPath: audioURL.path))
+  }
+
+  @Test
   func shareableFilesPreserveExistingTypeRules() throws {
     let context = try makeTestContext()
     try context.store.prepareStorage()
@@ -99,6 +129,28 @@ struct RecordingFileStoreTests {
         "Localization_Detecting_20260821_01.csv",
       ])
     #expect(devCSVFiles.map(\.lastPathComponent) == ["Dev_Detecting_20260821_01.csv"])
+  }
+
+  @Test
+  func devCSVFilesAreSortedByModificationDateDescending() throws {
+    let context = try makeTestContext()
+    try context.store.prepareStorage()
+    let olderURL = context.store.defaultDirectory.appendingPathComponent("Dev_Older.csv")
+    let newerURL = context.store.defaultDirectory.appendingPathComponent("Dev_Newer.csv")
+    try Data().write(to: olderURL)
+    try Data().write(to: newerURL)
+    try context.fileManager.setAttributes(
+      [.modificationDate: Date(timeIntervalSince1970: 1)],
+      ofItemAtPath: olderURL.path
+    )
+    try context.fileManager.setAttributes(
+      [.modificationDate: Date(timeIntervalSince1970: 2)],
+      ofItemAtPath: newerURL.path
+    )
+
+    let files = context.store.allDevCSVFiles()
+
+    #expect(files.map(\.lastPathComponent) == ["Dev_Newer.csv", "Dev_Older.csv"])
   }
 
   private func makeTestContext() throws -> TestContext {

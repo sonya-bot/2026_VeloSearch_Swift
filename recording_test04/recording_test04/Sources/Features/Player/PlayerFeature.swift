@@ -1,6 +1,4 @@
-import AVFoundation
 import Foundation
-import Observation
 import SwiftUI
 
 // MARK: - 0. Preview(Xcode)
@@ -14,128 +12,10 @@ struct PlayerView_Previews: PreviewProvider {
   }
 }
 
-// MARK: - 1. AudioPlaybackController (動作の定義)
-@Observable
-final class AudioPlaybackController {
-  private let recordingFileStore: RecordingFileStoring
-  private let userDefaults: UserDefaults
-
-  init(recordingFileStore: RecordingFileStoring, userDefaults: UserDefaults) {
-    self.recordingFileStore = recordingFileStore
-    self.userDefaults = userDefaults
-  }
-
-  var audioPlayer: AVAudioPlayer?
-
-  var isPlaying = false
-  var currentTime: TimeInterval = 0.0
-  var duration: TimeInterval = 0.0
-
-  // メーター用のレベル変数 (0.0 〜 1.0)
-  var leftLevel: CGFloat = 0.0
-  var rightLevel: CGFloat = 0.0
-  var leftDecibel: Float = 0.0
-  var rightDecibel: Float = 0.0
-
-  private var timer: Timer?
-
-  func prepareAudio(audio: URL) {
-    do {
-      audioPlayer = try AVAudioPlayer(contentsOf: audio)
-      audioPlayer?.isMeteringEnabled = true
-      audioPlayer?.prepareToPlay()
-      duration = audioPlayer?.duration ?? 0.0
-      currentTime = 0.0
-    } catch {
-      AppLogger.audio.error("音声の準備に失敗しました: \(error.localizedDescription)")
-    }
-  }
-
-  func startPlayback() {
-    let playbackSession = AVAudioSession.sharedInstance()
-    let outputRawValue =
-      userDefaults.string(forKey: "selectedOutputDevice")
-      ?? OutputDeviceOption.speaker.rawValue
-    let outputDevice = OutputDeviceOption(rawValue: outputRawValue) ?? .speaker
-    do {
-      let options: AVAudioSession.CategoryOptions =
-        outputDevice == .speaker ? [.defaultToSpeaker] : [.allowBluetoothA2DP]
-      try playbackSession.setCategory(.playAndRecord, mode: .default, options: options)
-      try playbackSession.setActive(true)
-      try playbackSession.overrideOutputAudioPort(outputDevice == .speaker ? .speaker : .none)
-
-      audioPlayer?.play()
-      isPlaying = true
-
-      timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-        guard let self = self, let player = self.audioPlayer else { return }
-        if player.isPlaying {
-          self.currentTime = player.currentTime
-
-          // メーターの更新とレベル計算
-          player.updateMeters()
-          let minDb: Float = -60.0
-          let leftPower = player.averagePower(forChannel: 0)
-          let rightPower =
-            player.numberOfChannels > 1 ? player.averagePower(forChannel: 1) : leftPower
-
-          self.leftDecibel = leftPower
-          self.rightDecibel = rightPower
-          self.leftLevel = CGFloat(max(0.0, min(1.0, (leftPower - minDb) / abs(minDb))))
-          self.rightLevel = CGFloat(max(0.0, min(1.0, (rightPower - minDb) / abs(minDb))))
-
-        } else {
-          self.stopPlayback()
-        }
-      }
-    } catch {
-      AppLogger.audio.error("再生に失敗しました: \(error.localizedDescription)")
-    }
-  }
-
-  func pausePlayback() {
-    audioPlayer?.pause()
-    isPlaying = false
-  }
-
-  func stopPlayback() {
-    audioPlayer?.stop()
-    isPlaying = false
-    timer?.invalidate()
-    timer = nil
-    leftLevel = 0.0
-    rightLevel = 0.0
-    leftDecibel = 0.0
-    rightDecibel = 0.0
-  }
-
-  func seek(to time: TimeInterval) {
-    audioPlayer?.currentTime = time
-    self.currentTime = time
-  }
-
-  func deleteAudio(audio: URL) {
-    self.stopPlayback()
-    do {
-      // WAVと対応する通常CSV・Dev CSVを一組として削除する。
-      try recordingFileStore.deleteRecording(at: audio)
-      userDefaults.removeObject(forKey: audio.lastPathComponent)
-    } catch {
-      AppLogger.storage.error("録音の削除に失敗しました: \(error.localizedDescription)")
-    }
-  }
-}
-
-// MARK: - 2. CSVRecord
-struct CSVRecord {
-  let time: Double
-  let speed: String
-}
-
 // MARK: - 3. PlayerView (メイン画面)
 struct PlayerView: View {
-  let initialURL: URL
-  private let userDefaults: UserDefaults
+  private let recordingFileStore: RecordingFileStoring
+  private let recordingDetailsController: PlayerRecordingDetailsController
 
   @State private var currentURL: URL
   @State private var audioPlayer: AudioPlaybackController
@@ -171,8 +51,11 @@ struct PlayerView: View {
     recordingFileStore: RecordingFileStoring,
     userDefaults: UserDefaults
   ) {
-    self.initialURL = audioURL
-    self.userDefaults = userDefaults
+    self.recordingFileStore = recordingFileStore
+    self.recordingDetailsController = PlayerRecordingDetailsController(
+      recordingFileStore: recordingFileStore,
+      userDefaults: userDefaults
+    )
     self._currentURL = State(initialValue: audioURL)
     self._audioPlayer = State(
       initialValue: AudioPlaybackController(
@@ -193,15 +76,15 @@ struct PlayerView: View {
         HStack(spacing: 0) {
           // 左:プレイヤーセクション
           VStack(spacing: 10) {
-            timeDisplay
-            playPauseButton
-            slider
+            playerTimeDisplay
+            playerPlaybackButton
+            playerSeekSlider
           }
           .frame(maxWidth: 240)
 
           // 中央:ステレオメーター
           VStack(spacing: 10) {
-            horizontalstereoMeters
+            horizontalStereoMeters
           }
           .padding(.horizontal, 10)
 
@@ -218,6 +101,7 @@ struct PlayerView: View {
               editHumidity: $editHumidity,
               editNote: $editNote,
               csvURL: currentURL.deletingPathExtension().appendingPathExtension("csv"),
+              recordingFileStore: recordingFileStore,
               onSave: saveChanges
             )
           }
@@ -228,11 +112,11 @@ struct PlayerView: View {
         // 縦画面レイアウト
         VStack(spacing: 10) {
           Spacer().frame(height: 20)
-          timeDisplay
+          playerTimeDisplay
           Spacer().frame(height: 20)
-          playPauseButton
-          slider
-          verticalstereoMeters
+          playerPlaybackButton
+          playerSeekSlider
+          verticalStereoMeters
           Spacer()
         }
         .padding(.bottom, 20)
@@ -258,6 +142,7 @@ struct PlayerView: View {
           editHumidity: $editHumidity,
           editNote: $editNote,
           csvURL: currentURL.deletingPathExtension().appendingPathExtension("csv"),
+          recordingFileStore: recordingFileStore,
           onSave: saveChanges
         )
       }
@@ -281,7 +166,7 @@ struct PlayerView: View {
             Image(systemName: "pencil")
           }
         }
-        Button(action: { shareAudio(url: currentURL) }) {
+        ShareLink(item: currentURL) {
           Image(systemName: "square.and.arrow.up")
         }
         Button(action: { showingDeleteAlert = true }) {
@@ -302,7 +187,7 @@ struct PlayerView: View {
     }
     .onAppear {
       audioPlayer.prepareAudio(audio: currentURL)
-      loadSavedData(for: currentURL.lastPathComponent)
+      loadSavedData()
       startEditing()
       loadCSVData()
     }
@@ -314,15 +199,14 @@ struct PlayerView: View {
   }
 
   // MARK: - 4.Components (編集用の部品)
-  private func loadSavedData(for fileName: String) {
-    fileNote =
-      userDefaults.string(forKey: "\(fileName)_note") ?? userDefaults.string(
-        forKey: fileName) ?? ""
-    fileExperimenter = userDefaults.string(forKey: "\(fileName)_experimenter") ?? ""
-    fileWeather = userDefaults.string(forKey: "\(fileName)_weather") ?? ""
-    fileTemperature = userDefaults.string(forKey: "\(fileName)_temperature") ?? ""
-    fileHumidity = userDefaults.string(forKey: "\(fileName)_humidity") ?? ""
-    fileScene = userDefaults.string(forKey: "\(fileName)_scene") ?? ""
+  private func loadSavedData() {
+    let details = recordingDetailsController.details(for: currentURL)
+    fileNote = details.note
+    fileExperimenter = details.experimenter
+    fileWeather = details.weather
+    fileTemperature = details.temperature
+    fileHumidity = details.humidity
+    fileScene = details.scene
   }
 
   private func startEditing() {
@@ -343,106 +227,35 @@ struct PlayerView: View {
     fileHumidity = editHumidity
     fileScene = editScene
 
-    let oldFileName = currentURL.lastPathComponent
-    var newURL = currentURL
-
     let oldNameWithoutExtension = currentURL.deletingPathExtension().lastPathComponent
     if editFileName != oldNameWithoutExtension && !editFileName.isEmpty {
       audioPlayer.stopPlayback()
-
-      let fileManager = FileManager.default
-      let folderURL = currentURL.deletingLastPathComponent()
-      let extensionString = currentURL.pathExtension
-      let destinationURL = folderURL.appendingPathComponent("\(editFileName).\(extensionString)")
-
-      let oldCSVURL = currentURL.deletingPathExtension().appendingPathExtension("csv")
-      let newCSVURL = folderURL.appendingPathComponent("\(editFileName).csv")
-      let oldDevCSVURL = folderURL.appendingPathComponent("Dev_\(oldNameWithoutExtension).csv")
-      let newDevCSVURL = folderURL.appendingPathComponent("Dev_\(editFileName).csv")
-
-      do {
-        try fileManager.moveItem(at: currentURL, to: destinationURL)
-        if fileManager.fileExists(atPath: oldCSVURL.path) {
-          try fileManager.moveItem(at: oldCSVURL, to: newCSVURL)
-        }
-        if fileManager.fileExists(atPath: oldDevCSVURL.path) {
-          try fileManager.moveItem(at: oldDevCSVURL, to: newDevCSVURL)
-        }
-        newURL = destinationURL
-        currentURL = destinationURL
-        loadCSVData()
-      } catch {
-        AppLogger.storage.error("録音名の変更に失敗しました: \(error.localizedDescription)")
-      }
     }
-
-    let newFileName = newURL.lastPathComponent
-
-    if oldFileName != newFileName {
-      userDefaults.removeObject(forKey: "\(oldFileName)_note")
-      userDefaults.removeObject(forKey: oldFileName)
-      userDefaults.removeObject(forKey: "\(oldFileName)_experimenter")
-      userDefaults.removeObject(forKey: "\(oldFileName)_weather")
-      userDefaults.removeObject(forKey: "\(oldFileName)_temperature")
-      userDefaults.removeObject(forKey: "\(oldFileName)_humidity")
-      userDefaults.removeObject(forKey: "\(oldFileName)_scene")
+    let details = RecordingDetails(
+      note: fileNote,
+      experimenter: fileExperimenter,
+      weather: fileWeather,
+      temperature: fileTemperature,
+      humidity: fileHumidity,
+      scene: fileScene
+    )
+    let previousURL = currentURL
+    currentURL = recordingDetailsController.save(
+      details: details,
+      for: currentURL,
+      renamedTo: editFileName
+    )
+    if currentURL != previousURL {
+      loadCSVData()
     }
-
-    userDefaults.set(fileNote, forKey: "\(newFileName)_note")
-    userDefaults.set(fileExperimenter, forKey: "\(newFileName)_experimenter")
-    userDefaults.set(fileWeather, forKey: "\(newFileName)_weather")
-    userDefaults.set(fileTemperature, forKey: "\(newFileName)_temperature")
-    userDefaults.set(fileHumidity, forKey: "\(newFileName)_humidity")
-    userDefaults.set(fileScene, forKey: "\(newFileName)_scene")
-  }
-
-  private func shareAudio(url: URL) {
-    let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-
-    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-      let window = windowScene.windows.first(where: { $0.isKeyWindow }),
-      let rootVC = window.rootViewController
-    {
-
-      var topVC = rootVC
-      while let presentedVC = topVC.presentedViewController {
-        topVC = presentedVC
-      }
-
-      if let popover = activityVC.popoverPresentationController {
-        popover.sourceView = topVC.view
-        popover.sourceRect = CGRect(
-          x: topVC.view.bounds.midX, y: topVC.view.bounds.midY, width: 0, height: 0)
-        popover.permittedArrowDirections = []
-      }
-
-      topVC.present(activityVC, animated: true)
-    }
-  }
-
-  private func formatTime(_ time: TimeInterval) -> String {
-    let minutes = Int(time) / 60
-    let seconds = Int(time) % 60
-    return String(format: "%02d:%02d", minutes, seconds)
   }
 
   private func loadCSVData() {
-    let csvURL = currentURL.deletingPathExtension().appendingPathExtension("csv")
-    do {
-      let csvString = try String(contentsOf: csvURL, encoding: .utf8)
-      let lines = csvString.components(separatedBy: .newlines)
-      var records: [CSVRecord] = []
-      for line in lines.dropFirst() {
-        let columns = line.components(separatedBy: ",")
-        if columns.count >= 2, let time = Double(columns[0]) {
-          records.append(CSVRecord(time: time, speed: columns[1]))
-        }
-      }
-      self.csvRecords = records
+    csvRecords = recordingDetailsController.speedRecords(for: currentURL)
+    if csvRecords.isEmpty {
+      currentSpeed = ""
+    } else {
       updateSpeed(for: 0.0)
-    } catch {
-      AppLogger.storage.notice("対応する速度CSVを読み込めませんでした")
-      self.currentSpeed = ""
     }
   }
 
@@ -455,205 +268,55 @@ struct PlayerView: View {
 
   // MARK: - Components (UIパーツ)
   // 時間表示
-  private var timeDisplay: some View {
-    Text("\(formatTime(audioPlayer.currentTime)) / \(formatTime(audioPlayer.duration))")
-      .font(.system(size: 40, weight: .thin))
-      .monospacedDigit()
-      .onChange(of: audioPlayer.currentTime) { oldTime, newTime in
-        updateSpeed(for: newTime)
-      }
+  private var playerTimeDisplay: some View {
+    PlayerTimeDisplay(
+      currentTime: audioPlayer.currentTime,
+      duration: audioPlayer.duration,
+      onTimeChanged: updateSpeed
+    )
   }
 
   // 再生/一時停止ボタン
-  private var playPauseButton: some View {
-    Button {
+  private var playerPlaybackButton: some View {
+    PlayerPlaybackButton(isPlaying: audioPlayer.isPlaying) {
       if audioPlayer.isPlaying {
         audioPlayer.pausePlayback()
       } else {
         audioPlayer.startPlayback()
       }
-    } label: {
-      ZStack {
-        Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-          .font(.system(size: 64))
-          .foregroundColor(.red)
-        Circle()
-          .strokeBorder(Color.primary.opacity(0.2), lineWidth: 4)
-          .frame(width: 74, height: 74)
-      }
-
     }
   }
 
   // シークバー
-  private var slider: some View {
-    Slider(
-      value: Binding(
-        get: { audioPlayer.currentTime },
-        set: { newValue in
-          audioPlayer.seek(to: newValue)
-        }
-      ), in: 0...(audioPlayer.duration > 0 ? audioPlayer.duration : 1.0)
+  private var playerSeekSlider: some View {
+    PlayerSeekSlider(
+      currentTime: audioPlayer.currentTime,
+      duration: audioPlayer.duration,
+      horizontalPadding: verticalSizeClass == .compact ? 10 : 30,
+      onSeek: audioPlayer.seek
     )
-    .accentColor(.red)
-    .padding(.horizontal, verticalSizeClass == .compact ? 10 : 30)
   }
 
   // ステレオメーター部分(縦画面用)
-  private var verticalstereoMeters: some View {
-    HStack(spacing: 50) {
-      VStack {
-        VerticaldBMeter(level: audioPlayer.leftLevel, label: "L", font: .system(.caption))
-        Text("\(Int(audioPlayer.leftDecibel)) dB")
-          .font(.system(.title3))
-          .monospacedDigit()
-          .frame(width: 80)
-      }
-      VStack {
-        VerticaldBMeter(level: audioPlayer.rightLevel, label: "R", font: .system(.caption))
-        Text("\(Int(audioPlayer.rightDecibel)) dB")
-          .font(.system(.title3))
-          .monospacedDigit()
-          .frame(width: 80)
-      }
-    }
+  private var verticalStereoMeters: some View {
+    PlayerStereoMeters(
+      leftLevel: audioPlayer.leftLevel,
+      rightLevel: audioPlayer.rightLevel,
+      leftDecibel: audioPlayer.leftDecibel,
+      rightDecibel: audioPlayer.rightDecibel,
+      spacing: 50,
+      meterWidth: nil
+    )
   }
   // ステレオメーター部分(横画面用)
-  private var horizontalstereoMeters: some View {
-    HStack(spacing: 10) {
-      VStack {
-        VerticaldBMeter(
-          level: audioPlayer.leftLevel, label: "L", font: .system(.caption), width: 40)
-        Text("\(Int(audioPlayer.leftDecibel)) dB")
-          .font(.system(.title3))
-          .monospacedDigit()
-          .frame(width: 80)
-      }
-      VStack {
-        VerticaldBMeter(
-          level: audioPlayer.rightLevel, label: "R", font: .system(.caption), width: 40)
-        Text("\(Int(audioPlayer.rightDecibel)) dB")
-          .font(.system(.title3))
-          .monospacedDigit()
-          .frame(width: 80)
-      }
-    }
-  }
-}
-
-// MARK: ボトムシート用コンポーネント
-struct EditSheetView: View {
-  @Binding var isPresented: Bool
-  @Binding var sheetDetent: PresentationDetent
-  @Binding var editFileName: String
-  @Binding var editExperimenter: String
-  @Binding var editScene: String
-  @Binding var editWeather: String
-  @Binding var editTemperature: String
-  @Binding var editHumidity: String
-  @Binding var editNote: String
-
-  var csvURL: URL
-  var onSave: () -> Void
-
-  // シートが引き上げられているか（.height(180) 以外か）を判定
-  var isEditingMode: Bool {
-    sheetDetent != .height(180)
-  }
-
-  var body: some View {
-    VStack(spacing: 0) {
-      // 引き上げられている時（編集モード）だけヘッダーを表示
-      if isEditingMode {
-        HStack {
-          Spacer()
-
-          Button("保存") {
-            onSave()
-            isPresented = false
-            sheetDetent = .height(180)  // 保存後に元の高さに閉じる
-          }
-          .bold()
-          .foregroundColor(.blue)
-        }
-        .padding()
-        .background(Color(UIColor.secondarySystemGroupedBackground))
-      }
-
-      // リスト形式の入力フォーム
-      List {
-        Section {
-          TextField("ファイル名 (例: DRTF_Angle045_Take1)", text: $editFileName)
-            .font(.title3)
-            .bold()
-            .padding(.vertical, 4)
-            .disabled(!isEditingMode)  // 引き上げていない時は編集不可
-        } header: {
-          Text("File Name")
-        }
-
-        // 引き上げられている時だけ他の項目も表示
-        if isEditingMode {
-          Section(header: Text("Details")) {
-            HStack {
-              Text("Experimenter")
-              Spacer()
-              TextField("Name", text: $editExperimenter).multilineTextAlignment(.trailing)
-            }
-            HStack {
-              Text("Scene")
-              Spacer()
-              TextField("Pattern", text: $editScene).multilineTextAlignment(.trailing)
-            }
-          }
-
-          Section(header: Text("Environment")) {
-            HStack {
-              Text("Weather")
-              Spacer()
-              TextField("Weather", text: $editWeather).multilineTextAlignment(.trailing)
-            }
-            HStack {
-              Text("Temperature")
-              Spacer()
-              TextField("Temp", text: $editTemperature)
-                .multilineTextAlignment(.trailing).keyboardType(.decimalPad)
-              Text("°C").foregroundColor(.secondary)
-            }
-            HStack {
-              Text("Humidity")
-              Spacer()
-              TextField("Humid", text: $editHumidity)
-                .multilineTextAlignment(.trailing).keyboardType(.decimalPad)
-              Text("%").foregroundColor(.secondary)
-            }
-          }
-
-          Section(header: Text("Note")) {
-            TextEditor(text: $editNote)
-              .frame(minHeight: 80)
-          }
-
-          // CSVデータの共有と遷移
-          Section(
-            header: HStack {
-              Text("Speed Data (CSV)")
-              Spacer()
-              ShareLink(item: csvURL) {
-                Label("Share", systemImage: "square.and.arrow.up")
-                  .textCase(.none)
-                  .font(.body)
-                  .foregroundColor(.blue)
-              }
-            }
-          ) {
-            NavigationLink(destination: CSVPreviewView(csvURL: csvURL)) {
-              Label(csvURL.lastPathComponent, systemImage: "doc.text.fill")
-            }
-          }
-        }
-      }
-      .listStyle(.insetGrouped)
-    }
+  private var horizontalStereoMeters: some View {
+    PlayerStereoMeters(
+      leftLevel: audioPlayer.leftLevel,
+      rightLevel: audioPlayer.rightLevel,
+      leftDecibel: audioPlayer.leftDecibel,
+      rightDecibel: audioPlayer.rightDecibel,
+      spacing: 10,
+      meterWidth: 40
+    )
   }
 }

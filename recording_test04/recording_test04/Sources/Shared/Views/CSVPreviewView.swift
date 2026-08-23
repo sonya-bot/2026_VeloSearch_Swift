@@ -3,25 +3,31 @@ import SwiftUI
 // MARK: - 0. Preview(Xcode)
 struct CSVPreviewView_Previews: PreviewProvider {
   static var previews: some View {
-    CSVPreviewView(csvURL: URL(string: "https://example.com/data.csv")!)
+    CSVPreviewView(
+      csvURL: URL(string: "https://example.com/data.csv")!,
+      recordingFileStore: RecordingFileStore.shared
+    )
   }
-}
-
-// MARK: - 1. リスト表示用のデータ構造
-struct CSVDataRow: Identifiable {
-  let id = UUID()
-  let columns: [String]
 }
 
 // MARK: - 2. プレビュー画面UI
 struct CSVPreviewView: View {
   let csvURL: URL
-  @State private var headers: [String] = []
-  @State private var rows: [CSVDataRow] = []
+  @State private var viewModel: CSVPreviewViewModel
+
+  init(csvURL: URL, recordingFileStore: RecordingFileStoring) {
+    self.csvURL = csvURL
+    _viewModel = State(
+      initialValue: CSVPreviewViewModel(
+        csvURL: csvURL,
+        recordingFileStore: recordingFileStore
+      )
+    )
+  }
 
   var body: some View {
     VStack(spacing: 0) {
-      if headers.isEmpty {
+      if viewModel.headers.isEmpty {
         ProgressView("Loading CSV...")
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
@@ -29,7 +35,7 @@ struct CSVPreviewView: View {
           VStack(alignment: .leading, spacing: 0) {
             // 見出し行（ヘッダー）
             HStack(spacing: 16) {
-              ForEach(Array(headers.enumerated()), id: \.offset) { index, header in
+              ForEach(Array(viewModel.headers.enumerated()), id: \.offset) { _, header in
                 Text(header)
                   .font(.caption)
                   .bold()
@@ -43,13 +49,14 @@ struct CSVPreviewView: View {
 
             // データ一覧リスト
             LazyVStack(alignment: .leading, spacing: 12) {
-              ForEach(rows) { row in
+              ForEach(viewModel.rows) { row in
                 HStack(spacing: 16) {
                   ForEach(Array(row.columns.enumerated()), id: \.offset) { index, col in
                     Text(col)
                       .font(.system(.caption, design: .monospaced))
                       .frame(
-                        width: index < headers.count ? columnWidth(for: headers[index]) : 100,
+                        width: index < viewModel.headers.count
+                          ? columnWidth(for: viewModel.headers[index]) : 100,
                         alignment: .leading)
                   }
                 }
@@ -66,39 +73,12 @@ struct CSVPreviewView: View {
     .navigationTitle(csvURL.lastPathComponent)
     .navigationBarTitleDisplayMode(.inline)
     .onAppear {
-      loadCSV()
+      viewModel.load()
     }
   }
 
   // 各カラムの幅をよしなに計算
   private func columnWidth(for header: String) -> CGFloat {
     return max(100, CGFloat(header.count * 10))
-  }
-
-  // MARK: - 3. CSV読み込み処理
-  private func loadCSV() {
-    do {
-      // URLからテキストデータを読み込む
-      let data = try String(contentsOf: csvURL, encoding: .utf8)
-      let lines = data.components(separatedBy: .newlines).filter { !$0.isEmpty }
-      guard let firstLine = lines.first else { return }
-
-      let parsedHeaders = firstLine.components(separatedBy: ",")
-      var parsedRows: [CSVDataRow] = []
-
-      // 1行目（ヘッダー）を飛ばして、2行目から読み込む
-      for line in lines.dropFirst() {
-        let columns = line.components(separatedBy: ",")
-        parsedRows.append(CSVDataRow(columns: columns))
-      }
-
-      // 画面に反映
-      DispatchQueue.main.async {
-        self.headers = parsedHeaders
-        self.rows = parsedRows
-      }
-    } catch {
-      AppLogger.storage.error("CSVの読み込みに失敗しました: \(error.localizedDescription)")
-    }
   }
 }
