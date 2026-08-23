@@ -4,7 +4,7 @@ import SwiftUI
 enum AnalyzeConstants {
   static let minimumFrequency = 20.0
   static let maximumFrequency = 20_000.0
-  static let sweepDuration = 10.0
+  static let sweepDuration = 30.0
   static let preSilenceDuration = 1.0
   static let postSilenceDuration = 2.0
   static let countdownSeconds = 3
