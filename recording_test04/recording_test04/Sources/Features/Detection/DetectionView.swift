@@ -8,7 +8,10 @@ import SwiftUI
 // MARK: - 0. Preview(Xcode)
 struct DetectionView_Previews: PreviewProvider {
   static var previews: some View {
-    DetectionView(recordingFileStore: RecordingFileStore.shared)
+    DetectionView(
+      recordingFileStore: RecordingFileStore.shared,
+      audioIOController: AudioIOController()
+    )
   }
 }
 
@@ -46,13 +49,13 @@ enum LocalizationState: String {
 private enum DetectionCSVHeader {
   static let measurement = [
     "elapsed_time", "speed_kmh", "volume_db", "status", "ai_angle",
-    "ai_probability", "ground_truth_angle", "device_orientation", "mic_source",
+    "ai_probability", "ground_truth_angle", "direction_tag", "device_orientation", "mic_source",
     "buffer_count", "feature_created", "predict_executed", "predict_success",
   ].joined(separator: ",")
 
   static let development = [
     "elapsed_time", "speed_kmh", "volume_db", "status", "ai_angle",
-    "ai_probability", "ground_truth_angle", "device_orientation", "mic_source",
+    "ai_probability", "ground_truth_angle", "direction_tag", "device_orientation", "mic_source",
     "update_ms", "feature_skip_count", "prediction_skip_count", "beep_detected_count",
     "beep_detected_this_frame", "last_beep_elapsed_time", "beep_to_prediction_ms",
     "localization_state", "buffer_count", "feature_created", "predict_executed",
@@ -60,7 +63,8 @@ private enum DetectionCSVHeader {
   ].joined(separator: ",")
 
   static let localization = [
-    "event_id", "model_name", "elapsed_time", "ground_truth_angle", "predicted_angle",
+    "event_id", "model_name", "elapsed_time", "ground_truth_angle", "direction_tag",
+    "predicted_angle",
     "max_probability", "accepted", "prob_000", "prob_045", "prob_090", "prob_135",
     "prob_180", "prob_225", "prob_270", "prob_315", "beep_detected_time",
     "prediction_completed_time", "beep_to_prediction_ms", "warning_triggered",
@@ -72,10 +76,11 @@ private enum DetectionCSVHeader {
 @Observable
 final class DetectionController {
   private let recordingFileStore: RecordingFileStoring
+  private let audioIOController: AudioIOController
   private let audioEngine = AVAudioEngine()
   private var audioFile: AVAudioFile?
-  private var beepPlayer: AVAudioPlayer?
-  private var beepPlaybackTask: Task<Void, Never>?
+  private var testSoundPlayer: AVAudioPlayer?
+  private var testSoundPlaybackTask: Task<Void, Never>?
   // Core MLの特徴量抽出は44.1kHz / stereo / Float32を前提にしている。
   private let targetFormat = AVAudioFormat(
     commonFormat: .pcmFormatFloat32,
@@ -93,7 +98,7 @@ final class DetectionController {
   )
 
   var isRecording = false
-  var isBeepPlaying = false
+  var isTestSoundPlaying = false
   var state: DetectionState = .standby
   var elapsedTime: TimeInterval = 0.0
   var currentDecibel: Float = -160.0
@@ -102,6 +107,7 @@ final class DetectionController {
   var currentAIProbability: Float = 0.0
   var currentDirectionProbabilities: [Float] = Array(repeating: 0.0, count: 8)
   var currentGroundTruth: String = "FalseDetect"  // ピッカー選択値
+  private var currentDirectionTag = ""
   var warningTriggerID: Int = 0
 
   // ===== デバッグ情報 =====
@@ -148,52 +154,77 @@ final class DetectionController {
   private var isWarningArmed = true
   private let resultDisplaySeconds: TimeInterval = 3.0
 
-  init(recordingFileStore: RecordingFileStoring) {
+  init(
+    recordingFileStore: RecordingFileStoring,
+    audioIOController: AudioIOController
+  ) {
     self.recordingFileStore = recordingFileStore
+    self.audioIOController = audioIOController
   }
 
-  func playBeepSound() {
-    guard isRecording else {
-      AppLogger.detection.notice("Detect録音中のみBeep Testを再生できます")
+  @MainActor
+  func toggleTestSound(_ soundSource: MonitoringSoundSource) {
+    if isTestSoundPlaying {
+      stopTestSound()
       return
     }
 
-    guard let soundURL = Bundle.main.url(forResource: "beep", withExtension: "wav") else {
-      AppLogger.audio.error("beep.wavが見つかりません")
+    guard
+      let soundURL = Bundle.main.url(
+        forResource: soundSource.fileName,
+        withExtension: "wav"
+      )
+    else {
+      AppLogger.audio.error("テスト音源が見つかりません: \(soundSource.fileName).wav")
       return
     }
 
     do {
-      let audioSession = AVAudioSession.sharedInstance()
-      // Beep TestもMonitoring画面と同じ再生ルートを明示し、端末スピーカーから出力する。
-      try audioSession.setCategory(
-        .playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
-      try audioSession.setActive(true)
-      try configureInputSession(
-        audioSession, orientation: currentOrientation, micSource: currentMicSource)
+      if !isRecording {
+        _ = try audioIOController.configureForRecording(allowsPlayback: true)
+      }
+      testSoundPlayer = try AVAudioPlayer(contentsOf: soundURL)
+      testSoundPlayer?.prepareToPlay()
+      guard testSoundPlayer?.play() == true else {
+        AppLogger.audio.error("テスト音源を再生できません: \(soundSource.fileName).wav")
+        return
+      }
+      isTestSoundPlaying = true
 
-      beepPlayer = try AVAudioPlayer(contentsOf: soundURL)
-      beepPlayer?.prepareToPlay()
-      beepPlayer?.play()
-      isBeepPlaying = true
-
-      let duration = beepPlayer?.duration ?? 0.0
-      beepPlaybackTask?.cancel()
-      beepPlaybackTask = Task { @MainActor [weak self] in
+      let duration = testSoundPlayer?.duration ?? 0.0
+      testSoundPlaybackTask?.cancel()
+      testSoundPlaybackTask = Task { @MainActor [weak self] in
         let nanoseconds = UInt64(max(duration, 0.0) * 1_000_000_000)
         try? await Task.sleep(nanoseconds: nanoseconds)
         guard !Task.isCancelled else { return }
-        self?.isBeepPlaying = false
+        self?.isTestSoundPlaying = false
+        self?.testSoundPlayer = nil
       }
     } catch {
-      isBeepPlaying = false
-      AppLogger.audio.error("beep.wavの再生に失敗しました: \(error.localizedDescription)")
+      stopTestSound()
+      AppLogger.audio.error("テスト音源の再生に失敗しました: \(error.localizedDescription)")
     }
   }
 
-  func startDetecting(locationManager: LocationService, orientation: String, micSource: String) {
+  @MainActor
+  func stopTestSound() {
+    testSoundPlaybackTask?.cancel()
+    testSoundPlaybackTask = nil
+    testSoundPlayer?.stop()
+    testSoundPlayer = nil
+    isTestSoundPlaying = false
+  }
+
+  func startDetecting(
+    locationManager: LocationService,
+    orientation: String,
+    micSource: String,
+    directionTag: MeasurementDirectionTag
+  ) {
     self.currentOrientation = orientation
     self.currentMicSource = micSource
+    self.currentDirectionTag = directionTag.rawValue
+    self.currentGroundTruth = directionTag == .none ? "FalseDetect" : directionTag.rawValue
     let audioSession = AVAudioSession.sharedInstance()
 
     do {
@@ -729,6 +760,7 @@ final class DetectionController {
         DirectionModelService.modelName,
         String(format: "%.2f", predictionCompletedTime),
         groundTruth,
+        currentDirectionTag,
         predictedAngle.map(String.init) ?? "",
         maxProbability.map { String(format: "%.6f", $0) } ?? "",
         accepted.description,
@@ -753,7 +785,7 @@ final class DetectionController {
       : String(format: "%.1f", currentAIProbability)
 
     let logLine = String(
-      format: "%.2f,%.1f,%.1f,%@,%@,%@,%@,%@,%@,%d,%@,%@,%@",
+      format: "%.2f,%.1f,%.1f,%@,%@,%@,%@,%@,%@,%@,%d,%@,%@,%@",
       elapsedTime,
       speed,
       currentDecibel,
@@ -761,6 +793,7 @@ final class DetectionController {
       angle,
       probability,
       currentGroundTruth,
+      currentDirectionTag,
       currentOrientation,
       currentMicSource,
       debugBufferCount,
@@ -781,7 +814,7 @@ final class DetectionController {
       : String(format: "%.1f", currentAIProbability)
 
     let logLine = String(
-      format: "%.2f,%.1f,%.1f,%@,%@,%@,%@,%@,%@,%.1f,%d,%d,%d,%@,%.2f,%.1f,%@,%d,%@,%@,%@,%@",
+      format: "%.2f,%.1f,%.1f,%@,%@,%@,%@,%@,%@,%@,%.1f,%d,%d,%d,%@,%.2f,%.1f,%@,%d,%@,%@,%@,%@",
       elapsedTime,
       speed,
       currentDecibel,
@@ -789,6 +822,7 @@ final class DetectionController {
       angle,
       probability,
       currentGroundTruth,
+      currentDirectionTag,
       currentOrientation,
       currentMicSource,
       debugLastUpdateMs,
@@ -863,18 +897,30 @@ final class DetectionController {
 // MARK: -2 DetentingsView(画面UI)
 struct DetectionView: View {
   @State private var detection: DetectionController
+  private let recordingFileStore: RecordingFileStoring
+  @ObservedObject private var audioIOController: AudioIOController
   @State private var locationManager = LocationService()
   @AppStorage("warningSoundID") private var selectedSoundID: Int = 1052
   @AppStorage("deviceOrientation") private var selectedOrientation: String = "横"
   @AppStorage("micSource") private var selectedMicSource: String = "背面"
   @AppStorage("showDebugOverlay") private var showDebugOverlay = false
+  @AppStorage(RecordingFileStore.selectedSceneKey) private var selectedScene = RecordingFileStore
+    .defaultSceneName
+  @AppStorage("measurementDirectionTag") private var directionTag = MeasurementDirectionTag.none
+  @AppStorage("selectedMonitoringSound") private var selectedTestSound = MonitoringSoundSource
+    .sweep5Seconds
 
-  // 正解入力ピッカーの選択肢
-  let truthOptions = ["FalseDetect", "0°", "45°", "90°", "135°", "180°", "225°", "270°", "315°"]
-
-  init(recordingFileStore: RecordingFileStoring) {
+  init(
+    recordingFileStore: RecordingFileStoring,
+    audioIOController: AudioIOController
+  ) {
+    self.recordingFileStore = recordingFileStore
+    self.audioIOController = audioIOController
     _detection = State(
-      initialValue: DetectionController(recordingFileStore: recordingFileStore)
+      initialValue: DetectionController(
+        recordingFileStore: recordingFileStore,
+        audioIOController: audioIOController
+      )
     )
   }
 
@@ -887,52 +933,37 @@ struct DetectionView: View {
           let isLandscape = geometry.size.width > geometry.size.height
 
           if isLandscape {
-            // 横画面レイアウト: 左右に2分割
-            HStack(spacing: 0) {
-              // 左半分 (ステータス + レーダー)
-              VStack(spacing: 8) {
-                Spacer(minLength: 0)
-                statusView
-                  .padding(.bottom, 10)
-                radarSection(isLandscape: isLandscape)
-                Spacer(minLength: 0)
+            HStack(spacing: 16) {
+              VStack(spacing: 10) {
+                detectionPanel(isLandscape: true)
+                actionButtons
               }
-              .frame(width: (geometry.size.width - 30) / 3)
+              .frame(width: (geometry.size.width - 16) / 3)
 
-              // 右半分 (速度/音量 + ピッカー + ボタン)
               VStack(spacing: 8) {
-                Spacer(minLength: 0)
-                micAssignmentLabels
-                  .padding(.top, -20)
-                groundTruthPicker
-                HStack(spacing: 16) {
-                  controlButton
-                  beepButton
-                }
+                AudioRouteStatusButton(audioIOController: audioIOController)
+                measurementSettings
                 Spacer(minLength: 0)
               }
-              .frame(width: (geometry.size.width - 30) * 2 / 3)
+              .frame(width: (geometry.size.width - 16) * 2 / 3)
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
           } else {
-            // 縦画面レイアウト (従来通り)
-            VStack(spacing: 0) {
-              statusView
-              micAssignmentLabels
-              Spacer(minLength: 0)
-              radarSection(isLandscape: isLandscape)
-              Spacer(minLength: 0)
-              groundTruthPicker
-                .padding(.bottom, 16)
-              HStack(spacing: 0) {
-                controlButton
-                beepButton
-              }
-              .padding(.bottom, 16)
+            VStack(spacing: 10) {
+              AudioRouteStatusButton(audioIOController: audioIOController)
+              measurementSettings
+              detectionPanel(isLandscape: false)
+                .frame(maxHeight: .infinity)
+              actionButtons
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+            .padding(.bottom, 12)
           }
         }
       }
-      .navigationTitle("Detection")
+      .navigationTitle("Detectings")
       .navigationBarTitleDisplayMode(.inline)
       // 連続したDetect期間につき、アラート音は最初の1回だけ再生する。
       .onChange(of: detection.warningTriggerID) { oldValue, newValue in
@@ -940,6 +971,12 @@ struct DetectionView: View {
           AudioServicesPlaySystemSound(SystemSoundID(selectedSoundID))
         }
       }
+      .onAppear {
+        if !selectedTestSound.isBundled {
+          selectedTestSound = .sweep5Seconds
+        }
+      }
+      .onDisappear { detection.stopTestSound() }
     }
   }
 
@@ -954,25 +991,34 @@ struct DetectionView: View {
       statusText = detection.state.title
     }
     return Text(statusText)
-      .font(.system(size: 28, weight: .bold))
+      .font(.headline)
+      .foregroundStyle(detection.state.themeColor)
       .minimumScaleFactor(0.5)
       .frame(maxWidth: .infinity)
-      .padding(.vertical, 8)
-      .background(RoundedRectangle(cornerRadius: 12).fill(Color.gray.opacity(0.15)))
-      .overlay(RoundedRectangle(cornerRadius: 12).stroke(detection.state.themeColor, lineWidth: 2))
-      .padding(.horizontal, 24)
-      .padding(.top, 10)
+      .padding(.vertical, 10)
   }
 
-  private func radarSection(isLandscape: Bool) -> some View {
-    RadarView(state: detection.state, aiAngle: detection.currentAIAngle)
-      .aspectRatio(1, contentMode: .fit)
-      .frame(maxWidth: 220, maxHeight: 220)
-      .overlay(alignment: .bottomTrailing) {
-        if showDebugOverlay {
-          debugOverlay(isLandscape: isLandscape)
+  private func detectionPanel(isLandscape: Bool) -> some View {
+    VStack(spacing: 0) {
+      statusView
+      Spacer(minLength: 0)
+      RadarView(state: detection.state, aiAngle: detection.currentAIAngle)
+        .aspectRatio(1, contentMode: .fit)
+        .frame(maxWidth: 220, maxHeight: 220)
+        .overlay(alignment: .bottomTrailing) {
+          if showDebugOverlay {
+            debugOverlay(isLandscape: isLandscape)
+          }
         }
-      }
+      Spacer(minLength: 0)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color(uiColor: .secondarySystemGroupedBackground))
+    .clipShape(RoundedRectangle(cornerRadius: 16))
+    .overlay {
+      RoundedRectangle(cornerRadius: 16)
+        .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+    }
   }
 
   private func debugOverlay(isLandscape: Bool) -> some View {
@@ -999,92 +1045,17 @@ struct DetectionView: View {
     .offset(x: isLandscape ? -50 : 80, y: 20)
   }
 
-  // マイクの割り当て表示
-  private var micAssignmentLabels: some View {
-    List {
-      Section(header: Text("Mic Assignment")) {
-        HStack {
-          // 1. 左側: マイク設定
-          VStack(spacing: 6) {
-            Text(selectedMicSource == "背面" ? "Back" : "Front")
-            Divider()
-              .overlay(Color.gray)
-              .padding(.horizontal, 10)
-            Text("Bottom")
-          }
-          .frame(maxWidth: .infinity)
-          Spacer()
-
-          Divider()
-            .overlay(Color.gray)
-
-          // 2. 真ん中: 端末の向き
-          VStack(spacing: 6) {
-            Image(systemName: selectedOrientation == "縦" ? "iphone" : "iphone.landscape")
-              .font(.title2)
-            Text(selectedOrientation == "縦" ? "Portrait" : "Landscape")
-              .font(.caption)
-          }
-          .frame(maxWidth: .infinity)
-
-          Divider()
-            .overlay(Color.gray)
-
-          // 3. 右側: 音量確認
-          VStack(spacing: 6) {
-            Text("Volume").font(.caption).foregroundStyle(.secondary)
-            let decibelText =
-              detection.currentDecibel <= -160.0
-              ? "0.0" : String(format: "%.1f", detection.currentDecibel)
-            Text("\(decibelText) dB").font(.title3).monospacedDigit()
-          }
-          .frame(maxWidth: .infinity)
-        }
-      }
-    }
-    .listStyle(.insetGrouped)
-    .frame(height: 125)
-    .scrollDisabled(true)
-    .scrollContentBackground(.hidden)
-  }
-
-  private var groundTruthPicker: some View {
-    VStack(alignment: .leading, spacing: 5) {
-      Text("Ground Truth (正解/誤検知ラベル)").font(.caption).foregroundStyle(.secondary).padding(
-        .horizontal, 24)
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack {
-          ForEach(truthOptions, id: \.self) { option in
-            Button(action: {
-              detection.currentGroundTruth =
-                option == "FalseDetect"
-                ? "FalseDetect" : option.replacingOccurrences(of: "°", with: "")
-            }) {
-              Text(option == "FalseDetect" ? "誤検知" : option)
-                .font(.subheadline).bold()
-                .padding(.horizontal, 16).padding(.vertical, 10)
-                .background(
-                  detection.currentGroundTruth
-                    == (option == "FalseDetect"
-                      ? "FalseDetect" : option.replacingOccurrences(of: "°", with: ""))
-                    ? Color.blue : Color.gray.opacity(0.2)
-                )
-                .foregroundColor(
-                  detection.currentGroundTruth
-                    == (option == "FalseDetect"
-                      ? "FalseDetect" : option.replacingOccurrences(of: "°", with: ""))
-                    ? .white : .primary
-                )
-                .cornerRadius(8)
-            }
-          }
-        }
-        .padding(.horizontal, 24)
-      }
+  private var measurementSettings: some View {
+    HStack(spacing: 8) {
+      MeasurementDestinationPicker(
+        recordingFileStore: recordingFileStore,
+        selection: $selectedScene,
+        isDisabled: detection.isRecording
+      )
+      MeasurementDirectionPicker(selection: $directionTag, isDisabled: detection.isRecording)
     }
   }
 
-  @ViewBuilder
   private var controlButton: some View {
     Button(action: {
       withAnimation(.spring()) {
@@ -1093,38 +1064,44 @@ struct DetectionView: View {
         } else {
           detection.startDetecting(
             locationManager: locationManager, orientation: selectedOrientation,
-            micSource: selectedMicSource)
+            micSource: selectedMicSource, directionTag: directionTag)
         }
       }
     }) {
       Text(detection.isRecording ? "Stop" : "Start")
-        .font(.title2).bold().foregroundStyle(.white)
-        .frame(maxWidth: .infinity).padding(.vertical, 14)
-        .background(detection.isRecording ? .red : .blue)
-        .clipShape(Capsule())
+        .font(.headline)
+        .foregroundStyle(.white)
+        .frame(width: 72, height: 72)
+        .background(detection.isRecording ? Color.red : Color.blue)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(Color.primary.opacity(0.25), lineWidth: 4))
     }
-    .padding(.horizontal, 24)
     .sensoryFeedback(.impact(flexibility: .solid), trigger: detection.isRecording)
   }
 
-  private var beepButton: some View {
-    Button(action: {
-      detection.playBeepSound()
-    }) {
-      Text(detection.isBeepPlaying ? "Playing" : "Beep Test")
-        .font(.title2).bold().foregroundStyle(.white)
-        .frame(maxWidth: .infinity).padding(.vertical, 14)
-        .background(Color.orange.opacity(beepButtonOpacity))
-        .clipShape(Capsule())
+  private var testButton: some View {
+    Button {
+      detection.toggleTestSound(selectedTestSound)
+    } label: {
+      Text(detection.isTestSoundPlaying ? "Stop Test" : "Test")
+        .font(.headline)
+        .foregroundStyle(.white)
+        .minimumScaleFactor(0.7)
+        .frame(width: 72, height: 72)
+        .background(Color.orange)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(Color.primary.opacity(0.25), lineWidth: 4))
     }
-    .padding(.horizontal, 24)
-    .disabled(!detection.isRecording || detection.isBeepPlaying)
   }
 
-  private var beepButtonOpacity: Double {
-    if !detection.isRecording { return 0.25 }
-    if detection.isBeepPlaying { return 0.45 }
-    return 1.0
+  private var actionButtons: some View {
+    HStack(spacing: 0) {
+      testButton
+        .frame(maxWidth: .infinity)
+      controlButton
+        .frame(maxWidth: .infinity)
+    }
+    .frame(height: 76)
   }
 }
 

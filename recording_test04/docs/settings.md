@@ -28,6 +28,12 @@ Detect判定時に選択されたSystem Sound IDを使用します。連続し�
 
 ## Recording Settings
 
+### Audio Input / Output
+
+入出力デバイスと録音形式は全タブ共通です。入力・出力はiPhoneまたは接続デバイス、録音形式は
+Automatic／Mono／Stereoから選択します。現在成立している経路は各タブ共通の表示専用モーダルで
+確認できます。実行できない組み合わせでは設定を自動変更せず、開始操作を無効にします。
+
 ### 端末の向き
 
 - キー：`deviceOrientation`
@@ -57,8 +63,7 @@ ONにするとルート画面の2番目のタブがRecordingsからMonitorings�
 - 初期値：iPhone本体
 - 選択肢：iPhone本体、接続デバイス
 
-接続デバイスがない場合は選択不可になり、選択中に切断された場合はiPhone本体へ戻ります。
-現在の録音処理は、この設定にかかわらず内蔵マイクを使用します。
+Detectingsは機能要件としてiPhoneのステレオ入力を使用し、その他の計測機能は共通設定を使用します。
 
 #### 再生デバイス
 
@@ -66,15 +71,15 @@ ONにするとルート画面の2番目のタブがRecordingsからMonitorings�
 - 初期値：iPhone本体
 - 選択肢：iPhone本体、接続デバイス
 
-接続デバイスがない場合は選択不可になり、切断時はiPhone本体へ戻ります。
+接続経路が成立しない場合も設定値を変更せず、計測開始前にエラーとして表示します。
 
 #### テスト音源
 
 - キー：`selectedMonitoringSound`
 - 初期値：スイープ信号5秒
 
-音源を選ぶと確認のため1回再生します。収録済み音源と未収録の選択肢については
-[録音・モニタリング](recording-and-monitoring.md)を参照してください。
+Settingsの共通項目として選択し、Detectingsの`Test`とMonitoringsで同じ音源を使用します。
+音源を選ぶと確認のため1回再生します。
 
 ## Developer
 
@@ -109,8 +114,12 @@ DefaultとすべてのSceneから`Dev_`で始まるCSVを収集し、更新日�
 | `deviceOrientation` | 端末向き |
 | `micSource` | 前面／背面マイク |
 | `isMonitoringEnabled` | モニタリング有効化 |
-| `selectedInputDevice` | モニタリング入力 |
-| `selectedOutputDevice` | モニタリング出力 |
+| `selectedInputDevice` | 共通入力 |
+| `selectedOutputDevice` | 共通出力 |
+| `recordingChannelMode` | Automatic／Mono／Stereo |
+| `measurementDirectionTag` | Detecting／Monitoring／Analyze共通方向タグ |
+| `monitoringRepeatCount` | Monitoring実行回数 |
+| `analyzeRepeatCount` | Analyze実行回数 |
 | `selectedMonitoringSound` | テスト音源 |
 | `showDebugOverlay` | Detectingsデバッグ表示 |
 | `selectedSceneFolderName` | 現在の保存先Scene |

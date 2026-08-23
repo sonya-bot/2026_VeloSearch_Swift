@@ -53,9 +53,16 @@ final class AudioPlaybackController {
 
   func startPlayback() {
     let playbackSession = AVAudioSession.sharedInstance()
+    let outputRawValue =
+      userDefaults.string(forKey: "selectedOutputDevice")
+      ?? OutputDeviceOption.speaker.rawValue
+    let outputDevice = OutputDeviceOption(rawValue: outputRawValue) ?? .speaker
     do {
-      try playbackSession.setCategory(.playback, mode: .default)
+      let options: AVAudioSession.CategoryOptions =
+        outputDevice == .speaker ? [.defaultToSpeaker] : [.allowBluetoothA2DP]
+      try playbackSession.setCategory(.playAndRecord, mode: .default, options: options)
       try playbackSession.setActive(true)
+      try playbackSession.overrideOutputAudioPort(outputDevice == .speaker ? .speaker : .none)
 
       audioPlayer?.play()
       isPlaying = true

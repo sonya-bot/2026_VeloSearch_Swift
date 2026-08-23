@@ -6,15 +6,21 @@ import SwiftUI
 // MARK: - 0. Preview(Xcode)
 struct RecordingView_Previews: PreviewProvider {
   static var previews: some View {
-    RecordingView(recordingFileStore: RecordingFileStore.shared, userDefaults: .standard)
+    RecordingView(
+      recordingFileStore: RecordingFileStore.shared,
+      userDefaults: .standard,
+      audioIOController: AudioIOController()
+    )
   }
 }
 
 // MARK: - 1. AudioRecordingController (録音ロジック)
 @Observable
+@MainActor
 final class AudioRecordingController {
   private let recordingFileStore: RecordingFileStoring
   private let userDefaults: UserDefaults
+  private let audioIOController: AudioIOController
 
   var audioRecorder: AVAudioRecorder?
   private var audioPlayer: AVAudioPlayer?
@@ -36,11 +42,19 @@ final class AudioRecordingController {
   private var currentRecordingURL: URL?
   private var measurementTask: Task<Void, Never>?
   private var statusResetTask: Task<Void, Never>?
-  private var activeInputChannelCount = 0
+  private(set) var activeInputChannelCount = 2
+  private var directionTag: String?
+  private var recordingPrefix = "Recording"
+  private var recordingFinished: (() -> Void)?
 
-  init(recordingFileStore: RecordingFileStoring, userDefaults: UserDefaults) {
+  init(
+    recordingFileStore: RecordingFileStoring,
+    userDefaults: UserDefaults,
+    audioIOController: AudioIOController
+  ) {
     self.recordingFileStore = recordingFileStore
     self.userDefaults = userDefaults
+    self.audioIOController = audioIOController
   }
 
   private enum RecordingStartError: LocalizedError {
@@ -69,8 +83,13 @@ final class AudioRecordingController {
     }
   }
 
-  func startRecording(orientation: String, micSource: String, prefix: String = "Recording") {
-    let audioSession = AVAudioSession.sharedInstance()
+  func startRecording(
+    orientation: String,
+    micSource: String,
+    prefix: String = "Recording",
+    directionTag: String? = nil,
+    onFinished: (() -> Void)? = nil
+  ) {
     let isMonitoringRecording = prefix == "Monitoring"
     let outputRawValue =
       userDefaults.string(forKey: "selectedOutputDevice")
@@ -83,32 +102,27 @@ final class AudioRecordingController {
       self.currentBaseFileName = recordingFile.baseName
       let audioFilename = recordingFile.url
       self.currentRecordingURL = audioFilename
+      self.directionTag = directionTag
+      self.recordingPrefix = prefix
+      self.recordingFinished = onFinished
 
       measurementTask?.cancel()
       statusResetTask?.cancel()
       audioPlayer?.stop()
       audioPlayer = nil
 
-      // Monitoringでは設定画面の再生デバイス指定に合わせて出力経路を分ける。
-      // Bluetooth再生時に.defaultToSpeakerを同時指定すると、経路選択が曖昧になりやすい。
-      let sessionOptions: AVAudioSession.CategoryOptions =
-        outputDevice == .external
-        ? [.allowBluetoothA2DP]
-        : [.defaultToSpeaker]
-      try audioSession.setCategory(
-        .playAndRecord, mode: .default, options: sessionOptions)
-      try audioSession.setActive(true)
-      if outputDevice == .speaker {
-        try audioSession.overrideOutputAudioPort(.speaker)
-      } else {
-        try audioSession.overrideOutputAudioPort(.none)
-      }
+      _ = outputDevice
+      let audioConfiguration = try audioIOController.configureForRecording(
+        allowsPlayback: isMonitoringRecording
+      )
 
       if isMonitoringRecording {
         let soundRawValue =
           userDefaults.string(forKey: "selectedMonitoringSound")
           ?? MonitoringSoundSource.sweep5Seconds.rawValue
-        let soundSource = MonitoringSoundSource(rawValue: soundRawValue) ?? .sweep5Seconds
+        let storedSoundSource =
+          MonitoringSoundSource(rawValue: soundRawValue) ?? .sweep5Seconds
+        let soundSource = storedSoundSource.isBundled ? storedSoundSource : .sweep5Seconds
 
         guard
           let soundUrl = Bundle.main.url(forResource: soundSource.fileName, withExtension: "wav")
@@ -127,57 +141,14 @@ final class AudioRecordingController {
         }
       }
 
-      // 録音マイク（前面/背面）とステレオ設定
-      guard let availableInputs = audioSession.availableInputs,
-        let builtInMic = availableInputs.first(where: { $0.portType == .builtInMic })
-      else {
-        throw RecordingStartError.builtInMicUnavailable
-      }
-
-      let targetOrientation: AVAudioSession.Orientation = (micSource == "背面") ? .back : .front
-      guard
-        let selectedDataSource = builtInMic.dataSources?.first(where: {
-          $0.orientation == targetOrientation
-        })
-      else {
-        throw RecordingStartError.micDataSourceUnavailable(micSource)
-      }
-
-      // 対象のマイク(前面/背面)をハードウェアにセット
-      try builtInMic.setPreferredDataSource(selectedDataSource)
-
-      // ステレオ非対応の入力は定位用データとして扱えないため、
-      // 録音開始前に失敗扱いにする。
-      guard let supportedPatterns = selectedDataSource.supportedPolarPatterns,
-        supportedPatterns.contains(.stereo)
-      else {
-        throw RecordingStartError.stereoPolarPatternUnavailable
-      }
-      try selectedDataSource.setPreferredPolarPattern(.stereo)
-
-      // デバイス全体にこのマイク入力を適用
-      try audioSession.setPreferredInput(builtInMic)
-
-      // stereo polar patternと入力ポートを確定した後で2chを要求する。
-      // 要求前にmaximumInputNumberOfChannelsを見ると、
-      // 未確定の経路で1ch判定になる場合がある。
-      guard audioSession.maximumInputNumberOfChannels >= 2 else {
-        throw RecordingStartError.stereoInputUnavailable(audioSession.maximumInputNumberOfChannels)
-      }
-      try audioSession.setPreferredInputNumberOfChannels(2)
-
-      // 端末の向き設定を反映（必ずマイク設定の「後」に行う）
-      if orientation == "縦" {
-        try audioSession.setPreferredInputOrientation(.portrait)
-      } else {
-        try audioSession.setPreferredInputOrientation(.landscapeRight)
-      }
+      _ = orientation
+      _ = micSource
 
       // 録音フォーマット設定（ステレオ 44.1kHz 16bit PCM）
       let settings: [String: Any] = [
         AVFormatIDKey: Int(kAudioFormatLinearPCM),
         AVSampleRateKey: 44100.0,
-        AVNumberOfChannelsKey: 2,
+        AVNumberOfChannelsKey: audioConfiguration.channelCount,
         AVLinearPCMBitDepthKey: 16,
         AVLinearPCMIsBigEndianKey: false,
         AVLinearPCMIsFloatKey: false,
@@ -187,9 +158,7 @@ final class AudioRecordingController {
       // 録音開始
       audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
       audioRecorder?.isMeteringEnabled = true
-      // AVAudioRecorder作成直後のformat.channelCountはBluetooth出力時に1chを返す場合がある。
-      // 録音は2ch設定で要求し、実ファイルが2chかどうかはstopRecording後に検査する。
-      activeInputChannelCount = 2
+      activeInputChannelCount = audioConfiguration.channelCount
 
       isRecording = true
       elapsedTime = 0.0
@@ -198,8 +167,10 @@ final class AudioRecordingController {
 
       // 時間計測タイマー
       timer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] _ in
-        guard let self = self, let startTime = self.startTime else { return }
-        self.elapsedTime = Date().timeIntervalSince(startTime)
+        Task { @MainActor [weak self] in
+          guard let self, let startTime = self.startTime else { return }
+          self.elapsedTime = Date().timeIntervalSince(startTime)
+        }
       }
 
       if isMonitoringRecording {
@@ -237,7 +208,7 @@ final class AudioRecordingController {
       statusResetTask?.cancel()
       timer?.invalidate()
       levelTimer?.invalidate()
-      activeInputChannelCount = 0
+      activeInputChannelCount = 1
       currentRecordingURL = nil
       isRecording = false
       measurementStatus = error.localizedDescription
@@ -246,6 +217,8 @@ final class AudioRecordingController {
 
   func stopRecording() {
     let recordedURL = currentRecordingURL
+    let expectedChannelCount = activeInputChannelCount
+    let completion = recordingFinished
 
     measurementTask?.cancel()
     statusResetTask?.cancel()
@@ -260,44 +233,52 @@ final class AudioRecordingController {
     rightLevel = 0.0
     leftDecibel = 0.0
     rightDecibel = 0.0
-    activeInputChannelCount = 0
+    recordingFinished = nil
     currentRecordingURL = nil
 
-    if let recordedURL, !isStereoRecordingFile(recordedURL) {
+    if let recordedURL, !hasExpectedChannelCount(recordedURL, expected: expectedChannelCount) {
       try? FileManager.default.removeItem(at: recordedURL)
-      measurementStatus = "ステレオ録音未成立"
+      measurementStatus = "録音形式不一致"
       // 失敗理由を見逃さないよう、一定時間だけステータス表示を保持する。
       statusResetTask = Task {
         try? await Task.sleep(nanoseconds: 3_000_000_000)
         if Task.isCancelled { return }
 
         await MainActor.run {
-          if !self.isRecording && self.measurementStatus == "ステレオ録音未成立" {
+          if !self.isRecording && self.measurementStatus == "録音形式不一致" {
             self.measurementStatus = "待機中"
           }
         }
       }
+      return
     }
+
+    if let recordedURL, recordingPrefix == "Monitoring" {
+      writeMonitoringMetadata(for: recordedURL, channelCount: expectedChannelCount)
+    }
+    completion?()
   }
 
   private func startMonitoring() {
     levelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-      guard let self = self, let recorder = self.audioRecorder else { return }
-      recorder.updateMeters()
+      Task { @MainActor [weak self] in
+        guard let self, let recorder = self.audioRecorder else { return }
+        recorder.updateMeters()
 
-      // L(0) と R(1) のパワーを取得
-      self.leftDecibel = recorder.averagePower(forChannel: 0)
-      guard self.activeInputChannelCount >= 2 else {
-        self.rightDecibel = 0.0
+        // L(0) と R(1) のパワーを取得
+        self.leftDecibel = recorder.averagePower(forChannel: 0)
+        guard self.activeInputChannelCount >= 2 else {
+          self.rightDecibel = 0.0
+          self.leftLevel = self.normalizeSoundLevel(level: self.leftDecibel)
+          self.rightLevel = 0.0
+          return
+        }
+        self.rightDecibel = recorder.averagePower(forChannel: 1)
+
+        // 表示用に 0.0~1.0 に正規化
         self.leftLevel = self.normalizeSoundLevel(level: self.leftDecibel)
-        self.rightLevel = 0.0
-        return
+        self.rightLevel = self.normalizeSoundLevel(level: self.rightDecibel)
       }
-      self.rightDecibel = recorder.averagePower(forChannel: 1)
-
-      // 表示用に 0.0~1.0 に正規化
-      self.leftLevel = self.normalizeSoundLevel(level: self.leftDecibel)
-      self.rightLevel = self.normalizeSoundLevel(level: self.rightDecibel)
     }
   }
 
@@ -308,20 +289,57 @@ final class AudioRecordingController {
     return CGFloat((level - minDb) / abs(minDb))
   }
 
-  private func isStereoRecordingFile(_ url: URL) -> Bool {
+  private func hasExpectedChannelCount(_ url: URL, expected: Int) -> Bool {
     do {
       let file = try AVAudioFile(forReading: url)
-      return file.fileFormat.channelCount == 2
+      return file.fileFormat.channelCount == AVAudioChannelCount(expected)
     } catch {
       AppLogger.audio.error("録音ファイルの確認に失敗しました: \(error.localizedDescription)")
       return false
     }
   }
+
+  private func writeMonitoringMetadata(for audioURL: URL, channelCount: Int) {
+    let configuration = audioIOController.activeConfiguration
+    let metadata = MonitoringMeasurementMetadata(
+      recordedAt: Date(),
+      directionTag: directionTag,
+      inputDevice: configuration.inputName,
+      outputDevice: configuration.outputName,
+      sampleRate: configuration.sampleRate,
+      channelCount: channelCount,
+      channelLabels: channelCount >= 2
+        ? (configuration.isBuiltInInput
+          ? [configuration.micSource == .back ? "Back" : "Front", "Bottom"]
+          : ["Left", "Right"])
+        : ["Mono"]
+    )
+    let metadataURL = audioURL.deletingPathExtension().appendingPathExtension("json")
+    do {
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      encoder.dateEncodingStrategy = .iso8601
+      try encoder.encode(metadata).write(to: metadataURL, options: .atomic)
+    } catch {
+      AppLogger.storage.error("Monitoringメタデータの保存に失敗しました: \(error.localizedDescription)")
+    }
+  }
+}
+
+private struct MonitoringMeasurementMetadata: Encodable {
+  let recordedAt: Date
+  let directionTag: String?
+  let inputDevice: String
+  let outputDevice: String
+  let sampleRate: Double
+  let channelCount: Int
+  let channelLabels: [String]
 }
 
 // MARK: - 2. RecordingView (UI)
 struct RecordingView: View {
   private let recordingFileStore: RecordingFileStoring
+  @ObservedObject private var audioIOController: AudioIOController
   @State private var audioRecorder: AudioRecordingController
   @Environment(\.verticalSizeClass) var verticalSizeClass
 
@@ -329,14 +347,19 @@ struct RecordingView: View {
   @AppStorage("micSource") private var selectedMicSource: String = "背面"
   @AppStorage(RecordingFileStore.selectedSceneKey) private var selectedScene = RecordingFileStore
     .defaultSceneName
-  @State private var availableScenes: [String] = []
 
-  init(recordingFileStore: RecordingFileStoring, userDefaults: UserDefaults) {
+  init(
+    recordingFileStore: RecordingFileStoring,
+    userDefaults: UserDefaults,
+    audioIOController: AudioIOController
+  ) {
     self.recordingFileStore = recordingFileStore
+    self.audioIOController = audioIOController
     _audioRecorder = State(
       initialValue: AudioRecordingController(
         recordingFileStore: recordingFileStore,
-        userDefaults: userDefaults
+        userDefaults: userDefaults,
+        audioIOController: audioIOController
       )
     )
   }
@@ -365,9 +388,12 @@ struct RecordingView: View {
               .frame(width: (geometry.size.width - 30) / 3)
 
               VStack(spacing: 10) {
-                micAssignmentLabels
-                  .padding(.top, -12)
-                sceneDestinationPicker
+                AudioRouteStatusButton(audioIOController: audioIOController)
+                MeasurementDestinationPicker(
+                  recordingFileStore: recordingFileStore,
+                  selection: $selectedScene,
+                  isDisabled: audioRecorder.isRecording
+                )
                 horizontalStereoMeters(width: meterWidth, height: 24)
                 // Spacer()
               }
@@ -385,11 +411,20 @@ struct RecordingView: View {
             let meterHeight = min(220, max(180, geometry.size.height * 0.25))
 
             VStack(spacing: 10) {
-              timeDisplay
-              recordingStatus
-              micAssignmentLabels
-              sceneDestinationPicker
-              verticalStereoMeters(height: meterHeight)
+              AudioRouteStatusButton(audioIOController: audioIOController)
+              MeasurementDestinationPicker(
+                recordingFileStore: recordingFileStore,
+                selection: $selectedScene,
+                isDisabled: audioRecorder.isRecording
+              )
+              VStack(spacing: 8) {
+                timeDisplay
+                recordingStatus
+                verticalStereoMeters(height: meterHeight)
+              }
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+              .background(Color(uiColor: .secondarySystemGroupedBackground))
+              .clipShape(RoundedRectangle(cornerRadius: 16))
               Spacer(minLength: 4)
               recordButton
             }
@@ -402,7 +437,6 @@ struct RecordingView: View {
       }
       .navigationTitle("Recordings")
       .navigationBarTitleDisplayMode(.inline)
-      .onAppear { refreshScenes() }
     }
   }
 
@@ -424,85 +458,8 @@ struct RecordingView: View {
       .background(Capsule().fill(Color.primary.opacity(0.1)))
   }
 
-  // マイクの割り当て表示
-  private var micAssignmentLabels: some View {
-    List {
-      Section(header: Text("Mic Assignment")) {
-        HStack {
-          // 1. 左側: マイク設定
-          VStack(spacing: 6) {
-            Text(selectedMicSource == "背面" ? "Back" : "Front")
-            Divider()
-              .overlay(Color.gray)
-              .padding(.horizontal, 10)
-            Text("Bottom")
-          }
-          .frame(maxWidth: .infinity)
-          Spacer()
-
-          Divider()
-            .overlay(Color.gray)
-
-          // 3. 右側: 端末の向き
-          VStack(spacing: 6) {
-            Image(systemName: selectedOrientation == "縦" ? "iphone" : "iphone.landscape")
-              .font(.title2)
-            Text(selectedOrientation == "縦" ? "Portrait" : "Landscape")
-              .font(.caption)
-          }
-          .frame(maxWidth: .infinity)
-        }
-        // .padding(.vertical, 4)
-      }
-    }
-    .listStyle(.insetGrouped)
-    .frame(height: 125)
-    .scrollDisabled(true)  //
-    .scrollContentBackground(.hidden)
-  }
-
-  // 保存先はMonitoringViewと同じUIにする。
-  private var sceneDestinationPicker: some View {
-    Menu {
-      Picker("保存先", selection: $selectedScene) {
-        Text(RecordingFileStore.defaultSceneName).tag(RecordingFileStore.defaultSceneName)
-        ForEach(availableScenes, id: \.self) { scene in
-          Text(scene).tag(scene)
-        }
-      }
-    } label: {
-      HStack {
-        Text("保存先")
-          .foregroundStyle(.black)
-        Spacer()
-        Text(selectedScene)
-          .foregroundStyle(.black)
-          .lineLimit(1)
-        Image(systemName: "chevron.right")
-          .font(.caption)
-          .foregroundStyle(.black.opacity(0.55))
-      }
-      .padding(.horizontal, 16)
-      .frame(height: 44)
-      .background(Color(UIColor.secondarySystemGroupedBackground))
-      .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-    .padding(.horizontal)
-  }
-
-  private func refreshScenes() {
-    do {
-      try recordingFileStore.prepareStorage()
-      availableScenes = recordingFileStore.sceneDirectories().map(\.lastPathComponent)
-      if selectedScene != RecordingFileStore.defaultSceneName
-        && !availableScenes.contains(selectedScene)
-      {
-        selectedScene = RecordingFileStore.defaultSceneName
-      }
-    } catch {
-      selectedScene = RecordingFileStore.defaultSceneName
-      availableScenes = []
-    }
+  private var audioConfigurationIssue: String? {
+    audioIOController.configurationIssue()
   }
 
   // ステレオメーター部分(縦画面)
@@ -516,13 +473,15 @@ struct RecordingView: View {
           .monospacedDigit()
           .frame(width: 80)
       }
-      VStack {
-        VerticaldBMeter(
-          level: audioRecorder.rightLevel, label: "R", font: .system(.caption), height: height)
-        Text("\(Int(audioRecorder.rightDecibel)) dB")
-          .font(.system(.title3))
-          .monospacedDigit()
-          .frame(width: 80)
+      if audioRecorder.activeInputChannelCount >= 2 {
+        VStack {
+          VerticaldBMeter(
+            level: audioRecorder.rightLevel, label: "R", font: .system(.caption), height: height)
+          Text("\(Int(audioRecorder.rightDecibel)) dB")
+            .font(.system(.title3))
+            .monospacedDigit()
+            .frame(width: 80)
+        }
       }
     }
   }
@@ -543,18 +502,20 @@ struct RecordingView: View {
           .monospacedDigit()
           .frame(width: 64, alignment: .leading)
       }
-      HStack(spacing: 15) {
-        HorizontaldBMeter(
-          level: audioRecorder.rightLevel,
-          label: "R",
-          width: width,
-          height: height,
-          font: .system(.caption)
-        )
-        Text("\(Int(audioRecorder.rightDecibel)) dB")
-          .font(.system(.subheadline))
-          .monospacedDigit()
-          .frame(width: 64, alignment: .leading)
+      if audioRecorder.activeInputChannelCount >= 2 {
+        HStack(spacing: 15) {
+          HorizontaldBMeter(
+            level: audioRecorder.rightLevel,
+            label: "R",
+            width: width,
+            height: height,
+            font: .system(.caption)
+          )
+          Text("\(Int(audioRecorder.rightDecibel)) dB")
+            .font(.system(.subheadline))
+            .monospacedDigit()
+            .frame(width: 64, alignment: .leading)
+        }
       }
     }
   }
@@ -586,6 +547,15 @@ struct RecordingView: View {
             .fill(Color.red)
             .frame(width: 60, height: 60)
         }
+      }
+    }
+    .disabled(!audioRecorder.isRecording && audioConfigurationIssue != nil)
+    .overlay(alignment: .top) {
+      if !audioRecorder.isRecording, let audioConfigurationIssue {
+        Text(audioConfigurationIssue)
+          .font(.caption2)
+          .foregroundStyle(.red)
+          .offset(y: -24)
       }
     }
   }

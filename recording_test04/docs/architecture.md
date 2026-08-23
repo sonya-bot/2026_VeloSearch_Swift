@@ -30,12 +30,13 @@ AppRootView ─── AppRootViewModel
 
 ### AppRootView
 
-次の4タブを構成し、各Featureへ依存関係を渡します。
+次の5タブを構成し、各Featureへ依存関係を渡します。
 
 1. Detectings
 2. RecordingsまたはMonitorings
 3. Collections
 4. Settings
+5. Analyze
 
 ### AppRootViewModel
 
@@ -50,6 +51,7 @@ AppRootView ─── AppRootViewModel
 - `RecordingFileStoring`
 - `UserDefaults`
 - `NotificationCenter`
+- `AudioIOController`
 
 本番では`AppDependencies.live`を使用し、テストでは専用の依存関係へ差し替えられます。
 
@@ -60,6 +62,7 @@ AppRootView ─── AppRootViewModel
 | Detection | 検知セッションの状態、レーダー表示、Ground Truth入力を管理します。 |
 | Recording | 通常録音、レベル表示、保存先選択を管理します。 |
 | Monitoring | テスト音源を使った録音と自動停止を管理します。 |
+| Analyze | ESS測定、IR・周波数応答解析、反復実行を管理します。 |
 | Collections | Sceneと録音一覧、検索、お気に入り、共有を管理します。 |
 | Player | WAV再生、シーク、編集、単体共有を管理します。 |
 | Settings | 永続設定とデバッグCSVへの導線を管理します。 |

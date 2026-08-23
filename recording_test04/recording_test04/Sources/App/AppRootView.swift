@@ -17,7 +17,10 @@ struct AppRootView: View {
   var body: some View {
     TabView(selection: $viewModel.selectedTab) {
       Tab("Detectings", systemImage: "waveform", value: 0) {
-        DetectionView(recordingFileStore: dependencies.recordingFileStore)
+        DetectionView(
+          recordingFileStore: dependencies.recordingFileStore,
+          audioIOController: dependencies.audioIOController
+        )
       }
 
       Tab(
@@ -28,16 +31,28 @@ struct AppRootView: View {
         recordingTab
       }
 
-      Tab("Collections", systemImage: "square.stack.fill", value: 2) {
+      Tab("Analyze", systemImage: "chart.xyaxis.line", value: 2) {
+        AnalyzeView(
+          recordingFileStore: dependencies.recordingFileStore,
+          userDefaults: dependencies.userDefaults,
+          audioIOController: dependencies.audioIOController
+        )
+      }
+
+      Tab("Collections", systemImage: "square.stack.fill", value: 3) {
         CollectionsView(
           recordingFileStore: dependencies.recordingFileStore,
           userDefaults: dependencies.userDefaults
         )
       }
 
-      Tab("Settings", systemImage: "gearshape", value: 3) {
-        SettingsView(recordingFileStore: dependencies.recordingFileStore)
+      Tab("Settings", systemImage: "gearshape", value: 4) {
+        SettingsView(
+          recordingFileStore: dependencies.recordingFileStore,
+          audioIOController: dependencies.audioIOController
+        )
       }
+
     }
     .tabViewStyle(.sidebarAdaptable)
   }
@@ -47,12 +62,14 @@ struct AppRootView: View {
     if viewModel.isMonitoringEnabled {
       MonitoringView(
         recordingFileStore: dependencies.recordingFileStore,
-        userDefaults: dependencies.userDefaults
+        userDefaults: dependencies.userDefaults,
+        audioIOController: dependencies.audioIOController
       )
     } else {
       RecordingView(
         recordingFileStore: dependencies.recordingFileStore,
-        userDefaults: dependencies.userDefaults
+        userDefaults: dependencies.userDefaults,
+        audioIOController: dependencies.audioIOController
       )
     }
   }

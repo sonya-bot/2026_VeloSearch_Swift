@@ -109,9 +109,13 @@ final class RecordingFileStore: RecordingFileStoring {
     // 移行できなかった元ファイルは残し、録音機能自体は継続できるようにする。
     try? migrateRootFilesToDefault()
 
-    let selected =
-      userDefaults.string(forKey: Self.selectedSceneKey)
-      ?? Self.defaultSceneName
+    let selected: String
+    if let persistedSelection = userDefaults.string(forKey: Self.selectedSceneKey) {
+      selected = persistedSelection
+    } else {
+      selected = Self.defaultSceneName
+      userDefaults.set(Self.defaultSceneName, forKey: Self.selectedSceneKey)
+    }
     if selected != Self.defaultSceneName && !sceneExists(named: selected) {
       userDefaults.set(Self.defaultSceneName, forKey: Self.selectedSceneKey)
     }
@@ -135,8 +139,11 @@ final class RecordingFileStore: RecordingFileStoring {
       at: directory,
       includingPropertiesForKeys: nil,
       options: [.skipsHiddenFiles]
-    ))?.filter { $0.pathExtension.lowercased() == "wav" }
-      .sorted { $0.lastPathComponent > $1.lastPathComponent } ?? []
+    ))?.filter {
+      let name = $0.deletingPathExtension().lastPathComponent
+      return $0.pathExtension.lowercased() == "wav" && !name.contains("_IR_CH")
+    }
+    .sorted { $0.lastPathComponent > $1.lastPathComponent } ?? []
   }
 
   func selectedDirectory() throws -> URL {
@@ -233,11 +240,15 @@ final class RecordingFileStore: RecordingFileStoring {
   func deleteRecording(at audioURL: URL) throws {
     let baseName = audioURL.deletingPathExtension().lastPathComponent
     let folder = audioURL.deletingLastPathComponent()
-    let relatedURLs = [
-      audioURL,
-      folder.appendingPathComponent("\(baseName).csv"),
-      folder.appendingPathComponent("Dev_\(baseName).csv"),
-    ]
+    let files = try fileManager.contentsOfDirectory(
+      at: folder,
+      includingPropertiesForKeys: nil,
+      options: [.skipsHiddenFiles]
+    )
+    let relatedURLs = files.filter { url in
+      let stem = url.deletingPathExtension().lastPathComponent
+      return stem == baseName || stem == "Dev_\(baseName)" || stem.hasPrefix("\(baseName)_IR_CH")
+    }
 
     for url in relatedURLs where fileManager.fileExists(atPath: url.path) {
       try fileManager.removeItem(at: url)
@@ -259,7 +270,7 @@ final class RecordingFileStore: RecordingFileStoring {
       case .wav: return ext == "wav"
       case .csv: return ext == "csv" && !isDevCSV
       case .devCSV: return isDevCSV
-      case .all: return ext == "wav" || ext == "csv"
+      case .all: return ext == "wav" || ext == "csv" || ext == "json"
       }
     }.sorted {
       $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
@@ -329,7 +340,7 @@ final class RecordingFileStore: RecordingFileStoring {
       options: [.skipsHiddenFiles]
     ).filter { url in
       let ext = url.pathExtension.lowercased()
-      return ext == "wav" || ext == "csv"
+      return ext == "wav" || ext == "csv" || ext == "json"
     }
 
     // 同じ録音のWAV・CSV・Dev CSVを一組として移行し、衝突時も同じ連番を保つ。

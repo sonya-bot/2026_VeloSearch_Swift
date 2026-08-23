@@ -6,7 +6,10 @@ import SwiftUI
 // MARK: - 0. Preview(Xcode)
 struct SettingsView_Previews: PreviewProvider {
   static var previews: some View {
-    SettingsView(recordingFileStore: RecordingFileStore.shared)
+    SettingsView(
+      recordingFileStore: RecordingFileStore.shared,
+      audioIOController: AudioIOController()
+    )
   }
 }
 
@@ -24,32 +27,6 @@ let soundOptions: [SoundOption] = [
   SoundOption(id: 1033, name: "チャイム", fileName: "alert_chime"),
   SoundOption(id: 1322, name: "警告", fileName: "alert_warning"),
 ]
-// 端末の向きを定義
-enum DeviceOrientationOption: String, CaseIterable, Identifiable {
-  case portrait = "縦"
-  case landscapeRight = "横"
-  var id: String { self.rawValue }
-}
-// ペアマイクの選択肢を定義
-enum MicSourceOption: String, CaseIterable, Identifiable {
-  case back = "背面"
-  case front = "前面"
-  var id: String { self.rawValue }
-}
-
-// 入力/出力デバイスの選択肢を定義
-enum InputDeviceOption: String, CaseIterable, Identifiable {
-  case builtIn = "iPhone本体"
-  case external = "接続デバイス"
-  var id: String { self.rawValue }
-}
-
-enum OutputDeviceOption: String, CaseIterable, Identifiable {
-  case speaker = "iPhone本体"
-  case external = "接続デバイス"
-  var id: String { self.rawValue }
-}
-
 //  モニタリング音源の選択肢を定義
 enum MonitoringSoundSource: String, CaseIterable, Identifiable {
   case sweep5Seconds = "スイープ信号 (5秒)"
@@ -62,6 +39,19 @@ enum MonitoringSoundSource: String, CaseIterable, Identifiable {
   case beep = "ビープ音"
 
   var id: String { self.rawValue }
+
+  static var availableCases: [Self] {
+    allCases.filter(\.isBundled)
+  }
+
+  var isBundled: Bool {
+    switch self {
+    case .sweep5Seconds, .sweep10Seconds, .sweep30Seconds, .cat, .beep:
+      return true
+    case .pinkNoise, .whiteNoise, .sineWave1k:
+      return false
+    }
+  }
 
   // 実際のファイル名（プロジェクトにドラッグ&ドロップしたファイル名と合わせます）
   var fileName: String {
@@ -96,16 +86,23 @@ struct SettingsIconView: View {
 // MARK: - 2. SettingsView UI (メイン画面)
 struct SettingsView: View {
   private let recordingFileStore: RecordingFileStoring
+  @ObservedObject private var audioIOController: AudioIOController
   @AppStorage("isNoiseFilterEnabled") private var isNoiseFilterEnabled = false
   @AppStorage("warningSoundID") private var selectedSoundID: Int = 1052
   @AppStorage("deviceOrientation") private var selectedOrientation: DeviceOrientationOption =
     .landscapeRight
   @AppStorage("micSource") private var selectedMicSource: MicSourceOption = .back
   @AppStorage("isMonitoringEnabled") private var isMonitoringEnabled = false
+  @AppStorage("selectedMonitoringSound") private var selectedTestSound = MonitoringSoundSource
+    .sweep5Seconds
   @AppStorage("showDebugOverlay") private var showDebugOverlay = false
 
-  init(recordingFileStore: RecordingFileStoring) {
+  init(
+    recordingFileStore: RecordingFileStoring,
+    audioIOController: AudioIOController
+  ) {
     self.recordingFileStore = recordingFileStore
+    self.audioIOController = audioIOController
   }
 
   var body: some View {
@@ -145,6 +142,18 @@ struct SettingsView: View {
 
         // MARK: - 録音設定セクション
         Section {
+          NavigationLink(
+            destination: AudioIOSettingsView(audioIOController: audioIOController)
+          ) {
+            HStack(spacing: 12) {
+              SettingsIconView(systemName: "waveform.circle.fill", color: .blue)
+              Text("Audio Input / Output")
+              Spacer()
+              Text(audioIOController.activeConfiguration.channelLabel)
+                .foregroundStyle(.secondary)
+            }
+          }
+
           // 端末の向き設定
           Picker(selection: $selectedOrientation) {
             ForEach(DeviceOrientationOption.allCases) { option in
@@ -160,7 +169,7 @@ struct SettingsView: View {
             }
           }
 
-          // ペアマイク設定（タップで別画面へ遷移）
+          // ペアマイク設定（Audio I/Oからも同じ設定へ遷移できる）
           NavigationLink(destination: MicSourceSettingView()) {
             HStack(spacing: 12) {
               SettingsIconView(systemName: "mic.fill", color: .orange)
@@ -168,6 +177,17 @@ struct SettingsView: View {
               Spacer()
               Text(selectedMicSource.rawValue)
                 .foregroundColor(.secondary)
+            }
+          }
+
+          NavigationLink(destination: TestSoundSelectionView()) {
+            HStack(spacing: 12) {
+              SettingsIconView(systemName: "speaker.wave.2.fill", color: .orange)
+              Text("テスト音源")
+              Spacer()
+              Text(selectedTestSound.rawValue)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
             }
           }
 
@@ -415,16 +435,6 @@ struct MicSourceSettingView: View {
 // モニタリング機能の設定画面
 struct MonitoringSettingView: View {
   @AppStorage("isMonitoringEnabled") var isMonitoringEnabled: Bool = false
-  @AppStorage("selectedInputDevice") var selectedInputDevice: InputDeviceOption = .builtIn
-  @AppStorage("selectedOutputDevice") var selectedOutputDevice: OutputDeviceOption = .speaker
-
-  // デバイスの接続状態（動的に更新）
-  @State private var isExternalInputAvailable: Bool = false
-  @State private var isExternalOutputAvailable: Bool = false
-
-  // モニタリング音源の選択
-  @AppStorage("selectedMonitoringSound") var selectedMonitoringSound: MonitoringSoundSource =
-    .sweep5Seconds
 
   var body: some View {
     Form {
@@ -469,106 +479,15 @@ struct MonitoringSettingView: View {
         }
       }
 
-      // 2. デバイス選択 (トグルON時のみ表示)
-      if isMonitoringEnabled {
-        // 録音デバイス（入力）
-        Section {
-          ForEach(InputDeviceOption.allCases) { option in
-            let isAvailable = (option == .builtIn || isExternalInputAvailable)
-
-            Button(action: {
-              if isAvailable { selectedInputDevice = option }
-            }) {
-              HStack {
-                Text(option.rawValue)
-                  .foregroundColor(isAvailable ? .primary : .secondary)  // 未接続時はグレー
-                Spacer()
-                if selectedInputDevice == option {
-                  Image(systemName: "checkmark")
-                    .foregroundColor(isAvailable ? .blue : .secondary)
-                }
-              }
-            }
-            .disabled(!isAvailable)  // 未接続時はタップ不可
-          }
-        } header: {
-          Text("録音デバイス")
-        }
-
-        // 再生デバイス（出力）
-        Section {
-          ForEach(OutputDeviceOption.allCases) { option in
-            let isAvailable = (option == .speaker || isExternalOutputAvailable)
-
-            Button(action: {
-              if isAvailable { selectedOutputDevice = option }
-            }) {
-              HStack {
-                Text(option.rawValue)
-                  .foregroundColor(isAvailable ? .primary : .secondary)  // 未接続時はグレー
-                Spacer()
-                if selectedOutputDevice == option {
-                  Image(systemName: "checkmark")
-                    .foregroundColor(isAvailable ? .blue : .secondary)
-                }
-              }
-            }
-            .disabled(!isAvailable)  // 未接続時はタップ不可
-          }
-        } header: {
-          Text("再生デバイス")
-        }
-
-        // 3. モニタリング音源の選択
-        Section {
-          NavigationLink(destination: MonitoringSoundSelectionView()) {
-            HStack {
-              Text(selectedMonitoringSound.rawValue)
-                .foregroundColor(.secondary)
-            }
-          }
-        } header: {
-          Text("テスト音源")
-        }
-      }
     }
     .navigationTitle("モニタリング")
     .navigationBarTitleDisplayMode(.inline)
     .toolbar(.hidden, for: .tabBar)  // タブバーを隠す
-    .onAppear {
-      checkDeviceAvailability()
-    }
-    // デバイスの抜き差し（ルート変更）を検知してUIを更新
-    .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) {
-      _ in
-      checkDeviceAvailability()
-    }
-  }
-
-  /// デバイスの接続状況を確認し、必要に応じて選択を安全な方に倒す
-  private func checkDeviceAvailability() {
-    let session = AVAudioSession.sharedInstance()
-
-    // 入力: 内蔵マイク以外（有線マイク、Bluetooth等）があるか
-    let availableInputs = session.availableInputs ?? []
-    isExternalInputAvailable = availableInputs.contains { $0.portType != .builtInMic }
-
-    // 出力: 内蔵スピーカー以外（ヘッドフォン、Bluetooth等）があるか
-    let currentRoute = session.currentRoute
-    isExternalOutputAvailable = currentRoute.outputs.contains { $0.portType != .builtInSpeaker }
-
-    // 安全策：選択中のデバイスが抜かれたら「本体/スピーカー」に自動で戻す
-    if !isExternalInputAvailable && selectedInputDevice == .external {
-      selectedInputDevice = .builtIn
-    }
-    if !isExternalOutputAvailable && selectedOutputDevice == .external {
-      selectedOutputDevice = .speaker
-    }
   }
 }
 
 // MARK: - 音源選択およびプレビュー画面 (子画面)
-struct MonitoringSoundSelectionView: View {
+struct TestSoundSelectionView: View {
   @AppStorage("selectedMonitoringSound") var selectedMonitoringSound: MonitoringSoundSource =
     .sweep5Seconds
 
@@ -578,7 +497,7 @@ struct MonitoringSoundSelectionView: View {
   var body: some View {
     Form {
       Section {
-        ForEach(MonitoringSoundSource.allCases) { source in
+        ForEach(MonitoringSoundSource.availableCases) { source in
           Button(action: {
             selectedMonitoringSound = source
             playSoundPreview(fileName: source.fileName)
@@ -598,8 +517,13 @@ struct MonitoringSoundSelectionView: View {
         Text("選択すると確認のために音が1回再生されます。")
       }
     }
-    .navigationTitle("再生音源")
+    .navigationTitle("テスト音源")
     .navigationBarTitleDisplayMode(.inline)
+    .onAppear {
+      if !selectedMonitoringSound.isBundled {
+        selectedMonitoringSound = .sweep5Seconds
+      }
+    }
     .onDisappear {
       // 画面を閉じた時に音が鳴っていれば強制停止
       audioPlayer?.stop()

@@ -6,7 +6,11 @@ import SwiftUI
 // MARK: - 0. Preview(Xcode)
 struct MonitoringView_Previews: PreviewProvider {
   static var previews: some View {
-    MonitoringView(recordingFileStore: RecordingFileStore.shared, userDefaults: .standard)
+    MonitoringView(
+      recordingFileStore: RecordingFileStore.shared,
+      userDefaults: .standard,
+      audioIOController: AudioIOController()
+    )
   }
 }
 
@@ -17,6 +21,7 @@ typealias AudioMonitoringController = AudioRecordingController
 // MARK: - 2. MonitoringView (UI)
 struct MonitoringView: View {
   private let recordingFileStore: RecordingFileStoring
+  @ObservedObject private var audioIOController: AudioIOController
   @State private var audioMonitor: AudioMonitoringController
   @Environment(\.verticalSizeClass) var verticalSizeClass
 
@@ -24,14 +29,25 @@ struct MonitoringView: View {
   @AppStorage("micSource") private var selectedMicSource: String = "背面"
   @AppStorage(RecordingFileStore.selectedSceneKey) private var selectedScene = RecordingFileStore
     .defaultSceneName
-  @State private var availableScenes: [String] = []
+  @AppStorage("measurementDirectionTag") private var directionTag: MeasurementDirectionTag = .none
+  @AppStorage("monitoringRepeatCount") private var repeatCount = 1
+  @State private var currentRepeat = 0
+  @State private var isRepeatSequenceActive = false
+  @State private var repeatTransitionTask: Task<Void, Never>?
+  @State private var countdownValue: Int?
 
-  init(recordingFileStore: RecordingFileStoring, userDefaults: UserDefaults) {
+  init(
+    recordingFileStore: RecordingFileStoring,
+    userDefaults: UserDefaults,
+    audioIOController: AudioIOController
+  ) {
     self.recordingFileStore = recordingFileStore
+    self.audioIOController = audioIOController
     _audioMonitor = State(
       initialValue: AudioMonitoringController(
         recordingFileStore: recordingFileStore,
-        userDefaults: userDefaults
+        userDefaults: userDefaults,
+        audioIOController: audioIOController
       )
     )
   }
@@ -60,9 +76,8 @@ struct MonitoringView: View {
               .frame(width: (geometry.size.width - 30) / 3)
 
               VStack(spacing: 10) {
-                micAssignmentLabels
-                  .padding(.top, -12)
-                sceneDestinationPicker
+                AudioRouteStatusButton(audioIOController: audioIOController)
+                measurementSettings
                 horizontalStereoMeters(width: meterWidth, height: 24)
                 // Spacer()
               }
@@ -79,11 +94,16 @@ struct MonitoringView: View {
             let meterHeight = min(220, max(180, geometry.size.height * 0.25))
 
             VStack(spacing: 10) {
-              timeDisplay
-              monitoringStatus
-              micAssignmentLabels
-              sceneDestinationPicker
-              verticalStereoMeters(height: meterHeight)
+              AudioRouteStatusButton(audioIOController: audioIOController)
+              measurementSettings
+              VStack(spacing: 8) {
+                timeDisplay
+                monitoringStatus
+                verticalStereoMeters(height: meterHeight)
+              }
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+              .background(Color(uiColor: .secondarySystemGroupedBackground))
+              .clipShape(RoundedRectangle(cornerRadius: 16))
               Spacer(minLength: 4)
               recordButton
             }
@@ -96,7 +116,9 @@ struct MonitoringView: View {
       }
       .navigationTitle("Monitorings")
       .navigationBarTitleDisplayMode(.inline)
-      .onAppear { refreshScenes() }
+      .onDisappear {
+        repeatTransitionTask?.cancel()
+      }
     }
   }
 
@@ -110,7 +132,7 @@ struct MonitoringView: View {
 
   // 録音状態の表示
   private var monitoringStatus: some View {
-    Text(audioMonitor.measurementStatus)
+    Text(repeatStatus)
       .font(.headline)
       .foregroundColor(audioMonitor.isRecording ? .red : .secondary)
       .padding(.vertical, 6)
@@ -118,84 +140,43 @@ struct MonitoringView: View {
       .background(Capsule().fill(Color.primary.opacity(0.1)))
   }
 
-  // マイクの割り当て表示
-  private var micAssignmentLabels: some View {
-    List {
-      Section(header: Text("Mic Assignment")) {
-        HStack {
-          // 1. 左側: マイク設定
-          VStack(spacing: 6) {
-            Text(selectedMicSource == "背面" ? "Back" : "Front")
-            Divider()
-              .overlay(Color.gray)
-              .padding(.horizontal, 10)
-            Text("Bottom")
-          }
-          .frame(maxWidth: .infinity)
-          Spacer()
-
-          Divider()
-            .overlay(Color.gray)
-
-          // 3. 右側: 端末の向き
-          VStack(spacing: 6) {
-            Image(systemName: selectedOrientation == "縦" ? "iphone" : "iphone.landscape")
-              .font(.title2)
-            Text(selectedOrientation == "縦" ? "Portrait" : "Landscape")
-              .font(.caption)
-          }
-          .frame(maxWidth: .infinity)
-        }
-        // .padding(.vertical, 4)
-      }
-    }
-    .listStyle(.insetGrouped)
-    .frame(height: 125)
-    .scrollDisabled(true)  // スクロールを無効化
-    .scrollContentBackground(.hidden)
+  private var repeatStatus: String {
+    guard isRepeatSequenceActive else { return audioMonitor.measurementStatus }
+    if let countdownValue { return "開始まで \(countdownValue) · \(currentRepeat) / \(repeatCount)" }
+    return "\(audioMonitor.measurementStatus) · \(currentRepeat) / \(repeatCount)"
   }
 
-  // 保存先は高さを抑えた1行表示とし、既存レイアウトをスクロール前提にしない。
-  private var sceneDestinationPicker: some View {
-    Menu {
-      Picker("保存先", selection: $selectedScene) {
-        Text(RecordingFileStore.defaultSceneName).tag(RecordingFileStore.defaultSceneName)
-        ForEach(availableScenes, id: \.self) { scene in
-          Text(scene).tag(scene)
+  private var measurementSettings: some View {
+    VStack(spacing: 8) {
+      MeasurementDestinationPicker(
+        recordingFileStore: recordingFileStore,
+        selection: $selectedScene,
+        isDisabled: isRepeatSequenceActive
+      )
+      HStack(spacing: 8) {
+        MeasurementDirectionPicker(
+          selection: $directionTag,
+          isDisabled: isRepeatSequenceActive
+        )
+        Stepper(value: $repeatCount, in: 1...99) {
+          Text("Repeat \(repeatCount)")
+            .font(.subheadline)
+            .monospacedDigit()
         }
+        .disabled(isRepeatSequenceActive)
+        .padding(.horizontal, 12)
+        .frame(height: 42)
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
       }
-    } label: {
-      HStack {
-        Text("保存先")
-          .foregroundStyle(.black)
-        Spacer()
-        Text(selectedScene)
-          .foregroundStyle(.black)
-          .lineLimit(1)
-        Image(systemName: "chevron.right")
-          .font(.caption)
-          .foregroundStyle(.black.opacity(0.55))
+      Text("所要時間 約 \(estimatedDurationSeconds) 秒")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      if let issue = audioIOController.configurationIssue(allowsPlayback: true) {
+        Text(issue)
+          .font(.caption2)
+          .foregroundStyle(.red)
       }
-      .padding(.horizontal, 16)
-      .frame(height: 44)
-      .background(Color(UIColor.secondarySystemGroupedBackground))
-      .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-    .padding(.horizontal)
-  }
-
-  private func refreshScenes() {
-    do {
-      try recordingFileStore.prepareStorage()
-      availableScenes = recordingFileStore.sceneDirectories().map(\.lastPathComponent)
-      if selectedScene != RecordingFileStore.defaultSceneName
-        && !availableScenes.contains(selectedScene)
-      {
-        selectedScene = RecordingFileStore.defaultSceneName
-      }
-    } catch {
-      selectedScene = RecordingFileStore.defaultSceneName
-      availableScenes = []
     }
   }
 
@@ -210,13 +191,15 @@ struct MonitoringView: View {
           .monospacedDigit()
           .frame(width: 80)
       }
-      VStack {
-        VerticaldBMeter(
-          level: audioMonitor.rightLevel, label: "R", font: .system(.caption), height: height)
-        Text("\(Int(audioMonitor.rightDecibel)) dB")
-          .font(.system(.title3))
-          .monospacedDigit()
-          .frame(width: 80)
+      if audioMonitor.activeInputChannelCount >= 2 {
+        VStack {
+          VerticaldBMeter(
+            level: audioMonitor.rightLevel, label: "R", font: .system(.caption), height: height)
+          Text("\(Int(audioMonitor.rightDecibel)) dB")
+            .font(.system(.title3))
+            .monospacedDigit()
+            .frame(width: 80)
+        }
       }
     }
   }
@@ -237,18 +220,20 @@ struct MonitoringView: View {
           .monospacedDigit()
           .frame(width: 64, alignment: .leading)
       }
-      HStack(spacing: 15) {
-        HorizontaldBMeter(
-          level: audioMonitor.rightLevel,
-          label: "R",
-          width: width,
-          height: height,
-          font: .system(.caption)
-        )
-        Text("\(Int(audioMonitor.rightDecibel)) dB")
-          .font(.system(.subheadline))
-          .monospacedDigit()
-          .frame(width: 64, alignment: .leading)
+      if audioMonitor.activeInputChannelCount >= 2 {
+        HStack(spacing: 15) {
+          HorizontaldBMeter(
+            level: audioMonitor.rightLevel,
+            label: "R",
+            width: width,
+            height: height,
+            font: .system(.caption)
+          )
+          Text("\(Int(audioMonitor.rightDecibel)) dB")
+            .font(.system(.subheadline))
+            .monospacedDigit()
+            .frame(width: 64, alignment: .leading)
+        }
       }
     }
   }
@@ -256,15 +241,13 @@ struct MonitoringView: View {
   // 録音ボタン
   private var recordButton: some View {
     Button {
-      if audioMonitor.isRecording {
+      if isRepeatSequenceActive {
+        isRepeatSequenceActive = false
+        repeatTransitionTask?.cancel()
+        countdownValue = nil
         audioMonitor.stopRecording()
       } else {
-        // @AppStorage で読み込んだ設定値を渡して録音を開始
-        audioMonitor.startRecording(
-          orientation: selectedOrientation,
-          micSource: selectedMicSource,
-          prefix: "Monitoring"  //モニタリングファイルの接頭辞は "Monitoring" に固定
-        )
+        startRepeatSequence()
       }
     } label: {
       ZStack {
@@ -282,6 +265,61 @@ struct MonitoringView: View {
         }
       }
     }
+    .disabled(
+      !isRepeatSequenceActive
+        && audioIOController.configurationIssue(allowsPlayback: true) != nil
+    )
+  }
+
+  private func startRepeatSequence() {
+    currentRepeat = 1
+    isRepeatSequenceActive = true
+    startCurrentRepeat()
+  }
+
+  private func startCurrentRepeat() {
+    repeatTransitionTask = Task { @MainActor in
+      for seconds in stride(from: 3, through: 1, by: -1) {
+        countdownValue = seconds
+        try? await Task.sleep(for: .seconds(1))
+        guard !Task.isCancelled, isRepeatSequenceActive else { return }
+      }
+      countdownValue = nil
+      audioMonitor.startRecording(
+        orientation: selectedOrientation,
+        micSource: selectedMicSource,
+        prefix: "Monitoring",
+        directionTag: directionTag == .none ? nil : directionTag.rawValue
+      ) {
+        Task { @MainActor in
+          guard isRepeatSequenceActive else { return }
+          guard currentRepeat < repeatCount else {
+            isRepeatSequenceActive = false
+            return
+          }
+          repeatTransitionTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled, isRepeatSequenceActive else { return }
+            currentRepeat += 1
+            startCurrentRepeat()
+          }
+        }
+      }
+      if !audioMonitor.isRecording {
+        isRepeatSequenceActive = false
+      }
+    }
+  }
+
+  private var estimatedDurationSeconds: Int {
+    let soundRawValue =
+      UserDefaults.standard.string(forKey: "selectedMonitoringSound")
+      ?? MonitoringSoundSource.sweep5Seconds.rawValue
+    let sound = MonitoringSoundSource(rawValue: soundRawValue) ?? .sweep5Seconds
+    let duration =
+      Bundle.main.url(forResource: sound.fileName, withExtension: "wav")
+      .flatMap { try? AVAudioPlayer(contentsOf: $0).duration } ?? 0
+    return Int(ceil(duration)) * repeatCount + 3 * repeatCount + 3 * max(repeatCount - 1, 0)
   }
 
   private func formatElapsedTime(_ time: TimeInterval) -> String {

@@ -46,6 +46,7 @@ Defaultは予約済みで、名称変更や削除の対象になりません。
 | 通常録音 | `Recording` |
 | モニタリング | `Monitoring` |
 | 検知 | `Detecting` |
+| 音響特性測定 | `Analyze` |
 
 連番は保存先、Prefix、日付ごとに既存WAVを調べ、最大値の次を使用します。
 
@@ -70,7 +71,10 @@ WAVを削除すると、存在する場合は次も同時に削除します。
 ```text
 <basename>.wav
 <basename>.csv
+<basename>.json
 Dev_<basename>.csv
+<basename>_IR_CH1.wav
+<basename>_IR_CH2.wav
 ```
 
 現在の互換仕様では`Localization_<basename>.csv`は連動削除の対象外です。
@@ -84,7 +88,7 @@ Sceneのコンテキストメニューから共有形式を選択します。
 | WAV | `.wav` |
 | CSV | `Dev_`で始まらない`.csv` |
 | Dev CSV | `Dev_`で始まる`.csv` |
-| すべて | `.wav`と`.csv` |
+| すべて | `.wav`、`.csv`、`.json` |
 
 ZIPは外部ライブラリを使わず、無圧縮Stored形式で一時ディレクトリへ生成します。
 アーカイブ名は`<Scene>_<Type>_yyyyMMdd.zip`です。

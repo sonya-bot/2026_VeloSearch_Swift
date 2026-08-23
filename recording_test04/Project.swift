@@ -8,6 +8,7 @@ let project = Project(
       destinations: .iOS,
       product: .app,
       bundleId: "dev.tuist.recording-test04",
+      deploymentTargets: .iOS("18.0"),
       infoPlist: .extendingDefault(
         with: [
           "NSMicrophoneUsageDescription": "録音機能と音源の定位処理のためにマイクを使用します。",
@@ -29,6 +30,7 @@ let project = Project(
       destinations: .iOS,
       product: .unitTests,
       bundleId: "dev.tuist.recording-test04Tests",
+      deploymentTargets: .iOS("18.0"),
       infoPlist: .default,
       buildableFolders: [
         "recording_test04/Tests"
