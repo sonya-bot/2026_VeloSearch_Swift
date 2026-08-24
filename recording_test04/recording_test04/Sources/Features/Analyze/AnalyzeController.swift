@@ -58,6 +58,8 @@ final class AnalyzeController: ObservableObject {
     guard !isRunning else { return }
     executionTask = Task { [weak self] in
       guard let self else { return }
+      audioIOController.lockConfiguration()
+      defer { audioIOController.unlockConfiguration() }
       do {
         for term in 1...repeatCount {
           try await countdown()

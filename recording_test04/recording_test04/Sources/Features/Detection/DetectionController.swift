@@ -87,6 +87,7 @@ final class DetectionController {
   )
 
   var isRecording = false
+  private var isAudioConfigurationLocked = false
   var isTestSoundPlaying = false
   var state: DetectionState = .standby
   var elapsedTime: TimeInterval = 0.0
@@ -151,6 +152,7 @@ final class DetectionController {
     self.audioIOController = audioIOController
   }
 
+  @MainActor
   func startDetecting(
     locationManager: LocationService,
     orientation: String,
@@ -214,6 +216,7 @@ final class DetectionController {
       audioEngine.prepare()
       try audioEngine.start()
 
+      lockAudioConfiguration()
       isRecording = true
       state = .safe
       elapsedTime = 0.0
@@ -251,11 +254,13 @@ final class DetectionController {
     }
   }
 
+  @MainActor
   func stopDetecting() {
     audioEngine.stop()
     audioEngine.inputNode.removeTap(onBus: 0)
     audioFile = nil
     isRecording = false
+    unlockAudioConfiguration()
     state = .standby
 
     timer?.invalidate()
@@ -283,6 +288,20 @@ final class DetectionController {
     pendingEventID = nil
     setLocalizationState(.listeningForBeep)
     resetDetectionDisplay()
+  }
+
+  @MainActor
+  private func lockAudioConfiguration() {
+    guard !isAudioConfigurationLocked else { return }
+    audioIOController.lockConfiguration()
+    isAudioConfigurationLocked = true
+  }
+
+  @MainActor
+  private func unlockAudioConfiguration() {
+    guard isAudioConfigurationLocked else { return }
+    audioIOController.unlockConfiguration()
+    isAudioConfigurationLocked = false
   }
 
 }

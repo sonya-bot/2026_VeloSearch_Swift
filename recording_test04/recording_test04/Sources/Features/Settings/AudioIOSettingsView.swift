@@ -2,18 +2,13 @@ import SwiftUI
 
 struct AudioIOSettingsView: View {
   @ObservedObject private var audioIOController: AudioIOController
-  @AppStorage(SettingsStorageKey.selectedInputDevice) private var inputDevice =
-    InputDeviceOption.builtIn
-  @AppStorage(SettingsStorageKey.selectedOutputDevice) private var outputDevice =
-    OutputDeviceOption.speaker
-  @AppStorage(SettingsStorageKey.recordingChannelMode) private var channelMode =
-    RecordingChannelMode.automatic
-  @AppStorage(SettingsStorageKey.deviceOrientation) private var orientation =
-    DeviceOrientationOption.landscapeRight
-  @AppStorage(SettingsStorageKey.micSource) private var micSource = MicSourceOption.back
+  @StateObject private var viewModel: AudioIOSettingsViewModel
 
   init(audioIOController: AudioIOController) {
     self.audioIOController = audioIOController
+    _viewModel = StateObject(
+      wrappedValue: AudioIOSettingsViewModel(audioIOController: audioIOController)
+    )
   }
 
   var body: some View {
@@ -37,7 +32,7 @@ struct AudioIOSettingsView: View {
       }
 
       Section {
-        Picker("出力デバイス", selection: $outputDevice) {
+        Picker("出力デバイス", selection: outputDeviceBinding) {
           ForEach(OutputDeviceOption.allCases) { option in
             Text(option.label).tag(option)
           }
@@ -50,30 +45,35 @@ struct AudioIOSettingsView: View {
       }
 
       Section {
-        Picker("入力デバイス", selection: $inputDevice) {
+        Picker("入力デバイス", selection: inputDeviceBinding) {
           ForEach(InputDeviceOption.allCases) { option in
             Text(option.label).tag(option)
           }
         }
         .pickerStyle(.navigationLink)
 
-        Picker("録音形式", selection: $channelMode) {
+        Picker("録音形式", selection: channelModeBinding) {
           ForEach(RecordingChannelMode.allCases) { mode in
             Text(mode.rawValue).tag(mode)
           }
         }
         .pickerStyle(.navigationLink)
 
-        if inputDevice == .builtIn {
-          Picker("入力方向", selection: $orientation) {
+        if viewModel.selection.inputDevice == .builtIn {
+          Picker("入力方向", selection: orientationBinding) {
             ForEach(DeviceOrientationOption.allCases) { option in
               Text(option.rawValue).tag(option)
             }
           }
           .pickerStyle(.navigationLink)
 
-          if channelMode == .stereo {
-            NavigationLink(destination: MicSourceSettingView()) {
+          if viewModel.selection.channelMode == .stereo {
+            NavigationLink(
+              destination: MicSourceSettingView(
+                selectedMicSource: micSourceBinding,
+                isEnabled: !viewModel.isApplying
+              )
+            ) {
               HStack {
                 Text("マイク構成")
                 Spacer()
@@ -86,19 +86,36 @@ struct AudioIOSettingsView: View {
       } header: {
         Text("Input")
       } footer: {
-        Text("実行時には、接続機器で実際に成立したチャンネル数を優先します。")
+        VStack(alignment: .leading, spacing: 4) {
+          Text("変更時に実機へ適用し、成立した設定だけを保存します。")
+          if let errorMessage = viewModel.errorMessage {
+            Text(errorMessage)
+              .foregroundStyle(.red)
+          }
+        }
       }
     }
     .navigationTitle("Audio Input / Output")
     .navigationBarTitleDisplayMode(.inline)
     .toolbar(.hidden, for: .tabBar)
-    .onAppear {
-      audioIOController.refresh()
+    .disabled(viewModel.isApplying)
+    .task {
+      await viewModel.applyStoredSelectionIfNeeded()
     }
   }
 
   private var effectiveFormatDescription: String {
     let configuration = audioIOController.activeConfiguration
+    switch audioIOController.configurationStatus {
+    case .unverified:
+      return "未確認"
+    case .applying:
+      return "確認中"
+    case .unavailable:
+      return "利用不可"
+    case .ready, .rejected:
+      break
+    }
     if let detail = configuration.channelDetail {
       return "\(configuration.channelLabel) · \(detail)"
     }
@@ -106,7 +123,42 @@ struct AudioIOSettingsView: View {
   }
 
   private var microphoneConfigurationLabel: String {
-    micSource == .back ? "Back + Bottom" : "Front + Bottom"
+    viewModel.selection.micSource == .back ? "Back + Bottom" : "Front + Bottom"
+  }
+
+  private var inputDeviceBinding: Binding<InputDeviceOption> {
+    Binding(
+      get: { viewModel.selection.inputDevice },
+      set: viewModel.selectInputDevice
+    )
+  }
+
+  private var outputDeviceBinding: Binding<OutputDeviceOption> {
+    Binding(
+      get: { viewModel.selection.outputDevice },
+      set: viewModel.selectOutputDevice
+    )
+  }
+
+  private var channelModeBinding: Binding<RecordingChannelMode> {
+    Binding(
+      get: { viewModel.selection.channelMode },
+      set: viewModel.selectChannelMode
+    )
+  }
+
+  private var orientationBinding: Binding<DeviceOrientationOption> {
+    Binding(
+      get: { viewModel.selection.orientation },
+      set: viewModel.selectOrientation
+    )
+  }
+
+  private var micSourceBinding: Binding<MicSourceOption> {
+    Binding(
+      get: { viewModel.selection.micSource },
+      set: viewModel.selectMicSource
+    )
   }
 
   private func routeRow(title: String, value: String, systemImage: String) -> some View {

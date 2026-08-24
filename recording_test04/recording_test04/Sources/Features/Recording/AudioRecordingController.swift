@@ -35,6 +35,7 @@ final class AudioRecordingController {
   private var directionTag: String?
   private var recordingPrefix = "Recording"
   private var recordingFinished: (() -> Void)?
+  private var isAudioConfigurationLocked = false
 
   init(
     recordingFileStore: RecordingFileStoring,
@@ -104,6 +105,7 @@ final class AudioRecordingController {
       let audioConfiguration = try audioIOController.configureForRecording(
         allowsPlayback: isMonitoringRecording
       )
+      lockAudioConfiguration()
 
       if isMonitoringRecording {
         let soundRawValue =
@@ -188,6 +190,7 @@ final class AudioRecordingController {
       }
 
     } catch {
+      unlockAudioConfiguration()
       AppLogger.audio.error("録音の開始に失敗しました: \(error.localizedDescription)")
       audioRecorder?.stop()
       audioPlayer?.stop()
@@ -224,6 +227,7 @@ final class AudioRecordingController {
     rightDecibel = 0.0
     recordingFinished = nil
     currentRecordingURL = nil
+    unlockAudioConfiguration()
 
     if let recordedURL, !hasExpectedChannelCount(recordedURL, expected: expectedChannelCount) {
       do {
@@ -250,6 +254,18 @@ final class AudioRecordingController {
       writeMonitoringMetadata(for: recordedURL, channelCount: expectedChannelCount)
     }
     completion?()
+  }
+
+  private func lockAudioConfiguration() {
+    guard !isAudioConfigurationLocked else { return }
+    audioIOController.lockConfiguration()
+    isAudioConfigurationLocked = true
+  }
+
+  private func unlockAudioConfiguration() {
+    guard isAudioConfigurationLocked else { return }
+    audioIOController.unlockConfiguration()
+    isAudioConfigurationLocked = false
   }
 
   private func startMonitoring() {

@@ -44,6 +44,35 @@ enum MicSourceOption: String, CaseIterable, Identifiable {
   var id: Self { self }
 }
 
+struct AudioIOSelection: Equatable {
+  var inputDevice: InputDeviceOption
+  var outputDevice: OutputDeviceOption
+  var channelMode: RecordingChannelMode
+  var orientation: DeviceOrientationOption
+  var micSource: MicSourceOption
+}
+
+enum AudioIOConfigurationStatus: Equatable {
+  case unverified
+  case applying
+  case ready
+  case rejected(String)
+  case unavailable(String)
+
+  var message: String? {
+    switch self {
+    case .unverified:
+      return "Audio I/Oを確認していません。"
+    case .applying:
+      return "Audio I/Oを確認中です。"
+    case .ready:
+      return nil
+    case .rejected(let message), .unavailable(let message):
+      return message
+    }
+  }
+}
+
 struct ActiveAudioConfiguration: Equatable {
   let inputName: String
   let inputConnection: String
@@ -85,6 +114,9 @@ enum AudioIOError: LocalizedError {
   case inputUnavailable(String)
   case inputDataSourceUnavailable(String)
   case stereoUnavailable(Int)
+  case stereoPolarPatternUnavailable(String)
+  case configurationNotEstablished(String)
+  case configurationLocked
 
   var errorDescription: String? {
     switch self {
@@ -94,6 +126,12 @@ enum AudioIOError: LocalizedError {
       return "\(source)マイクを利用できません。"
     case .stereoUnavailable(let channelCount):
       return "Stereo入力を利用できません（入力 \(channelCount)ch）。"
+    case .stereoPolarPatternUnavailable(let source):
+      return "\(source)マイク構成ではStereo入力を利用できません。"
+    case .configurationNotEstablished(let detail):
+      return "Audio I/O設定を確定できません（\(detail)）。"
+    case .configurationLocked:
+      return "計測中はAudio I/O設定を変更できません。"
     }
   }
 }

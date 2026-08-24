@@ -6,6 +6,46 @@ private enum AudioRouteStatusColumnStyle {
   case modal
 }
 
+private struct AudioRouteFormatPresentation {
+  let configuration: ActiveAudioConfiguration
+  let status: AudioIOConfigurationStatus
+
+  var iconName: String {
+    switch status {
+    case .unverified, .applying:
+      return "arrow.triangle.2.circlepath"
+    case .ready:
+      return configuration.channelIconName
+    case .rejected, .unavailable:
+      return "exclamationmark.triangle"
+    }
+  }
+
+  var label: String {
+    switch status {
+    case .unverified:
+      return "未確認"
+    case .applying:
+      return "確認中"
+    case .ready, .rejected:
+      return configuration.channelLabel
+    case .unavailable:
+      return "利用不可"
+    }
+  }
+
+  var detail: String? {
+    switch status {
+    case .ready:
+      return configuration.channelDetail
+    case .rejected:
+      return "設定変更失敗"
+    case .unverified, .applying, .unavailable:
+      return nil
+    }
+  }
+}
+
 private struct AudioRouteStatusColumn: View {
   let title: String
   let icon: String
@@ -64,6 +104,10 @@ struct AudioRouteStatusButton: View {
       isPresented = true
     } label: {
       let configuration = audioIOController.activeConfiguration
+      let format = AudioRouteFormatPresentation(
+        configuration: configuration,
+        status: audioIOController.configurationStatus
+      )
       HStack(spacing: 0) {
         AudioRouteStatusColumn(
           title: "Output",
@@ -84,9 +128,9 @@ struct AudioRouteStatusButton: View {
         Divider()
         AudioRouteStatusColumn(
           title: "Format",
-          icon: configuration.channelIconName,
-          value: configuration.channelLabel,
-          detail: configuration.channelDetail,
+          icon: format.iconName,
+          value: format.label,
+          detail: format.detail,
           style: .summary
         )
       }
@@ -115,6 +159,10 @@ struct AudioRouteStatusView: View {
 
   var body: some View {
     let configuration = audioIOController.activeConfiguration
+    let format = AudioRouteFormatPresentation(
+      configuration: configuration,
+      status: audioIOController.configurationStatus
+    )
     VStack(spacing: 18) {
       Text("Audio I/O")
         .font(.headline)
@@ -138,20 +186,37 @@ struct AudioRouteStatusView: View {
         Divider()
         AudioRouteStatusColumn(
           title: "Format",
-          icon: configuration.channelIconName,
-          value: configuration.channelLabel,
-          detail: configuration.channelDetail,
+          icon: format.iconName,
+          value: format.label,
+          detail: format.detail,
           style: .modal
         )
       }
       .frame(height: 102)
       .background(Color(uiColor: .secondarySystemGroupedBackground))
       .clipShape(RoundedRectangle(cornerRadius: 20))
+
+      if let message = audioIOController.configurationStatus.message {
+        Text(message)
+          .font(.caption2)
+          .foregroundStyle(statusColor)
+          .lineLimit(2)
+          .multilineTextAlignment(.center)
+      }
     }
     .padding()
     .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) {
       _ in
       audioIOController.refresh()
+    }
+  }
+
+  private var statusColor: Color {
+    switch audioIOController.configurationStatus {
+    case .rejected, .unavailable:
+      return .red
+    case .unverified, .applying, .ready:
+      return .secondary
     }
   }
 

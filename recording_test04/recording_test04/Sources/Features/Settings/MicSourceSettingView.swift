@@ -1,7 +1,8 @@
 import SwiftUI
 
 struct MicSourceSettingView: View {
-  @AppStorage(SettingsStorageKey.micSource) private var selectedMicSource = MicSourceOption.back
+  @Binding var selectedMicSource: MicSourceOption
+  let isEnabled: Bool
 
   var body: some View {
     Form {
@@ -39,6 +40,7 @@ struct MicSourceSettingView: View {
     .navigationTitle("ペアマイク")
     .navigationBarTitleDisplayMode(.inline)
     .toolbar(.hidden, for: .tabBar)
+    .disabled(!isEnabled)
   }
 
   private func microphoneLabel(title: String, color: Color) -> some View {

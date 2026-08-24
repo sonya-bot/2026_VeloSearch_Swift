@@ -47,6 +47,9 @@ final class ESSMeasurementService {
   {
     let input = engine.inputNode
     let inputFormat = input.inputFormat(forBus: 0)
+    if channelCount >= 2, inputFormat.channelCount < 2 {
+      throw AnalyzeError.stereoInputUnavailable(Int(inputFormat.channelCount))
+    }
     let actualChannelCount = min(max(Int(inputFormat.channelCount), 1), channelCount)
     capturedChannels = Array(repeating: [], count: actualChannelCount)
 
@@ -147,8 +150,14 @@ final class ESSMeasurementService {
 
 enum AnalyzeError: LocalizedError {
   case audioFormatUnavailable
+  case stereoInputUnavailable(Int)
 
   var errorDescription: String? {
-    "Analyzeで使用するオーディオ形式を作成できません。"
+    switch self {
+    case .audioFormatUnavailable:
+      return "Analyzeで使用するオーディオ形式を作成できません。"
+    case .stereoInputUnavailable(let channelCount):
+      return "AnalyzeのStereo入力を開始できません（入力 \(channelCount)ch）。"
+    }
   }
 }

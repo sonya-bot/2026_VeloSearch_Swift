@@ -58,6 +58,9 @@ struct AppRootView: View {
 
     }
     .tabViewStyle(.sidebarAdaptable)
+    .task {
+      await dependencies.audioIOController.applyStoredSelection()
+    }
   }
 
   @ViewBuilder
