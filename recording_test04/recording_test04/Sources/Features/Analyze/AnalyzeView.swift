@@ -9,6 +9,7 @@ struct AnalyzeView: View {
   @AppStorage("measurementDirectionTag") private var directionTag = MeasurementDirectionTag.none
   @AppStorage("analyzeRepeatCount") private var repeatCount = 1
   @AppStorage("recordingChannelMode") private var channelMode = RecordingChannelMode.automatic
+  @State private var expandedChart: AnalyzeChartSelection?
 
   init(
     recordingFileStore: RecordingFileStoring,
@@ -85,6 +86,9 @@ struct AnalyzeView: View {
       .background(Color(uiColor: .systemGroupedBackground))
       .navigationTitle("Analyze")
       .navigationBarTitleDisplayMode(.inline)
+      .fullScreenCover(item: $expandedChart) { selection in
+        AnalyzeChartDetailView(selection: selection)
+      }
     }
   }
 
@@ -187,15 +191,43 @@ struct AnalyzeView: View {
   private var waveformSection: some View {
     VStack(spacing: 3) {
       ForEach(0..<waveformDisplayCount, id: \.self) { channelIndex in
-        AnalyzeWaveform(
-          samples: controller.waveformChannels.indices.contains(channelIndex)
-            ? controller.waveformChannels[channelIndex] : []
-        )
-        .overlay(alignment: .topLeading) {
-          Text("CH\(channelIndex + 1)").font(.caption2).padding(3)
+        let samples = waveformSamples(at: channelIndex)
+        Button {
+          guard let sampleRate = controller.waveformSampleRate else { return }
+          expandedChart = .waveform(
+            channelNumber: channelIndex + 1,
+            samples: samples,
+            sampleRate: sampleRate
+          )
+        } label: {
+          AnalyzeWaveform(samples: samples)
+            .overlay(alignment: .topLeading) {
+              Text("CH\(channelIndex + 1)").font(.caption2).padding(3)
+            }
+            .overlay(alignment: .topTrailing) {
+              if canExpandWaveform(samples) {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                  .font(.caption2)
+                  .foregroundStyle(.secondary)
+                  .padding(5)
+              }
+            }
         }
+        .buttonStyle(.plain)
+        .disabled(!canExpandWaveform(samples))
+        .accessibilityLabel("CH\(channelIndex + 1)の音量波形")
+        .accessibilityHint(canExpandWaveform(samples) ? "ダブルタップして拡大表示" : "波形データなし")
       }
     }
+  }
+
+  private func waveformSamples(at channelIndex: Int) -> [Float] {
+    guard controller.waveformChannels.indices.contains(channelIndex) else { return [] }
+    return controller.waveformChannels[channelIndex]
+  }
+
+  private func canExpandWaveform(_ samples: [Float]) -> Bool {
+    !samples.isEmpty && controller.waveformSampleRate != nil && !controller.isRunning
   }
 
   private var waveformDisplayCount: Int {
@@ -210,8 +242,29 @@ struct AnalyzeView: View {
   }
 
   private var responseGraph: some View {
-    FrequencyResponseGraph(channels: controller.analyses.map(\.response))
-      .background(Color(uiColor: .secondarySystemGroupedBackground))
-      .clipShape(RoundedRectangle(cornerRadius: 12))
+    let channels = controller.analyses.map(\.response)
+    return Button {
+      expandedChart = .frequencyResponse(channels: channels)
+    } label: {
+      FrequencyResponseGraph(channels: channels)
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(alignment: .topTrailing) {
+          if canExpandResponseGraph(channels) {
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+              .padding(8)
+          }
+        }
+    }
+    .buttonStyle(.plain)
+    .disabled(!canExpandResponseGraph(channels))
+    .accessibilityLabel("音響特性グラフ")
+    .accessibilityHint(canExpandResponseGraph(channels) ? "ダブルタップして拡大表示" : "解析データなし")
+  }
+
+  private func canExpandResponseGraph(_ channels: [[FrequencyResponsePoint]]) -> Bool {
+    channels.contains { !$0.isEmpty } && !controller.isRunning
   }
 }

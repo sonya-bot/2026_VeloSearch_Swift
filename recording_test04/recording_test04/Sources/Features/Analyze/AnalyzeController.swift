@@ -27,6 +27,7 @@ final class AnalyzeController: ObservableObject {
   @Published private(set) var state: State = .standby
   @Published private(set) var analyses: [ESSChannelAnalysis] = []
   @Published private(set) var waveformChannels: [[Float]] = []
+  @Published private(set) var waveformSampleRate: Double?
   @Published private(set) var clippingWarning = false
   @Published private(set) var peakDecibels: Double?
 
@@ -84,6 +85,7 @@ final class AnalyzeController: ObservableObject {
             channelCount: configuration.channelCount
           )
           waveformChannels = capture.channels
+          waveformSampleRate = capture.sampleRate
           let peak = capture.channels.flatMap { $0 }.map { abs(Double($0)) }.max() ?? 0
           peakDecibels = peak > 0 ? 20 * log10(peak) : nil
           clippingWarning = peak >= 0.891
