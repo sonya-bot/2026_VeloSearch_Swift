@@ -49,7 +49,9 @@ xcodebuild \
 - WAV改名時の通常CSV／Dev CSV連動改名
 - 共有形式ごとの対象ファイル分類
 - Dev CSVの更新日時順ソート
+- 通常ファイル、ディレクトリ、存在しないパスの存在判定
 - AppRootViewModelによるモニタリング設定反映
+- Audio I/O設定の保存、旧出力設定の移行、出力ポート種別の識別
 - ESS解析結果の有限性と1 kHz正規化
 
 ストレージテストは一時ディレクトリと専用UserDefaults suiteを使用し、実際のDocumentsや
@@ -110,6 +112,13 @@ Swiftファイルは原則として1行120文字以内に保ちます。
 3. 入力テンソル形状が`AudioFeatureExtractor`の出力と一致することを確認します。
 4. 出力が8方向の確率であること、値が有限かつ0以上であることを確認します。
 5. 実音声で角度、閾値、CSV出力、処理時間を検証します。
+
+## アプリアイコンの更新
+
+アプリアイコンは`recording_test04/Resources/Assets.xcassets/AppIcon.appiconset`で管理します。
+1024×1024の元画像からiPhone／iPad用の各サイズを生成し、`Contents.json`の対応ファイル名を
+維持してください。更新後はAsset Catalogの警告がないことと、実機・Simulatorのホーム画面で
+小さいサイズでも主要図形が判別できることを確認します。
 
 ## 権限追加
 

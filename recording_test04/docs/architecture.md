@@ -68,7 +68,7 @@ AppRootView ─── AppRootViewModel
 | Monitoring | テスト音源を使った録音と自動停止を管理します。 |
 | Analyze | ESS測定、IR・周波数応答解析、反復実行を管理します。 |
 | Collections | Sceneと録音一覧、検索、お気に入り、共有を管理します。 |
-| Player | WAV再生、シーク、編集、単体共有を管理します。 |
+| Player | WAV再生、シーク、編集、対応CSVへの導線、単体共有を管理します。 |
 | Settings | 永続設定とデバッグCSVへの導線を管理します。 |
 
 `CollectionsViewModel`などのViewModelは画面状態と操作を保持します。録音、再生、検知のように
@@ -110,10 +110,14 @@ Analyzeの計測、解析、結果出力、Playerの再生、付帯情報、Coll
 ## Shared層
 
 - `AppLogger`：OSLogのカテゴリを一元化します。
-- `CSVPreviewView`：Dev CSVを表形式で表示します。
+- `CSVPreviewView`：Dev CSVと録音に対応する通常CSVを表形式で表示します。
 - `CSVPreviewViewModel`：RepositoryからCSVを読み込み、表示用の行へ変換します。
 - `MeasurementLandscapeLayout`：各計測タブの横画面カラム位置を統一します。
 - `MeasurementControlButton`：計測開始・停止ボタンの外形と状態表現を統一します。
+
+Analyzeの詳細グラフは、通常画面の縮小グラフとは分離したViewで目盛り、軸ラベル、選択カーソルを
+描画します。Playerの通常CSV導線はFeature内の共通部品を縦横レイアウトと編集画面から再利用し、
+ファイルの存在確認と読み込みは`RecordingFileStoring`を通して行います。
 
 ## 依存方向
 
