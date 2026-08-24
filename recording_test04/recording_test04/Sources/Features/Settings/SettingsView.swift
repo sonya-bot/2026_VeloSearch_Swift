@@ -68,7 +68,7 @@ struct SettingsView: View {
     } header: {
       Text("General Settings")
     } footer: {
-      Text("・録音時の環境ノイズを低減します(デコイ)\n・車両接近検知時の警告音を選択します")
+      Text("・録音時の環境ノイズを低減します(動作しません)\n・車両接近検知時の警告音を選択します")
         .font(.system(size: 12))
     }
   }
@@ -129,7 +129,7 @@ struct SettingsView: View {
         Text("Version")
           .font(.system(size: 16))
         Spacer()
-        Text("2.2.0")
+        Text("4.2.0")
           .foregroundStyle(.secondary)
       }
     } header: {
