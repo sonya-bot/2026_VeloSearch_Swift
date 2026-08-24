@@ -19,6 +19,7 @@ protocol RecordingFileStoring: AnyObject {
   func createShareArchive(sceneURL: URL, type: SceneShareType) throws -> URL
   func allDevCSVFiles() -> [URL]
   func csvContents(at url: URL) throws -> String
+  func fileExists(at url: URL) -> Bool
   func directoryExists(at url: URL) -> Bool
 }
 

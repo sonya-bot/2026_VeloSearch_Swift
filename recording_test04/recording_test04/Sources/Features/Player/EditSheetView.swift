@@ -12,7 +12,8 @@ struct EditSheetView: View {
   @Binding var editHumidity: String
   @Binding var editNote: String
 
-  var csvURL: URL
+  var csvURL: URL?
+  let showsCSVSection: Bool
   let recordingFileStore: RecordingFileStoring
   var onSave: () -> Void
 
@@ -94,26 +95,26 @@ struct EditSheetView: View {
               .frame(minHeight: 80)
           }
 
-          // CSVデータの共有と遷移
-          Section(
-            header: HStack {
-              Text("Speed Data (CSV)")
-              Spacer()
-              ShareLink(item: csvURL) {
-                Label("Share", systemImage: "square.and.arrow.up")
-                  .textCase(.none)
-                  .font(.body)
-                  .foregroundColor(.blue)
+          if showsCSVSection {
+            Section(
+              header: HStack {
+                Text("CSV Data")
+                Spacer()
+                if let csvURL {
+                  ShareLink(item: csvURL) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                      .textCase(.none)
+                      .font(.body)
+                      .foregroundColor(.blue)
+                  }
+                }
               }
-            }
-          ) {
-            NavigationLink(
-              destination: CSVPreviewView(
-                csvURL: csvURL,
-                recordingFileStore: recordingFileStore
-              )
             ) {
-              Label(csvURL.lastPathComponent, systemImage: "doc.text.fill")
+              CompanionCSVAccessLink(
+                csvURL: csvURL,
+                recordingFileStore: recordingFileStore,
+                style: .listRow
+              )
             }
           }
         }

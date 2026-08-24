@@ -153,6 +153,22 @@ struct RecordingFileStoreTests {
     #expect(files.map(\.lastPathComponent) == ["Dev_Newer.csv", "Dev_Older.csv"])
   }
 
+  @Test
+  func fileExistsReturnsTrueOnlyForFiles() throws {
+    let context = try makeTestContext()
+    try context.store.prepareStorage()
+    let csvURL = context.store.defaultDirectory.appendingPathComponent("Recording.csv")
+    try Data().write(to: csvURL)
+
+    #expect(context.store.fileExists(at: csvURL))
+    #expect(!context.store.fileExists(at: context.store.defaultDirectory))
+    #expect(
+      !context.store.fileExists(
+        at: context.store.defaultDirectory.appendingPathComponent("Missing.csv")
+      )
+    )
+  }
+
   private func makeTestContext() throws -> TestContext {
     let fileManager = FileManager.default
     let rootDirectory = fileManager.temporaryDirectory

@@ -44,6 +44,7 @@ struct PlayerView: View {
   @State private var editScene = ""
 
   @State private var csvRecords: [CSVRecord] = []
+  @State private var companionCSVURL: URL?
   @State private var currentSpeed: String = "--"
 
   init(
@@ -100,11 +101,14 @@ struct PlayerView: View {
               editTemperature: $editTemperature,
               editHumidity: $editHumidity,
               editNote: $editNote,
-              csvURL: currentURL.deletingPathExtension().appendingPathExtension("csv"),
+              csvURL: companionCSVURL,
+              showsCSVSection: false,
               recordingFileStore: recordingFileStore,
               onSave: saveChanges
             )
+            csvAccessRow
           }
+          .padding(.bottom, 8)
           .frame(maxWidth: 310)
         }
         .padding(.top, 10)
@@ -118,6 +122,8 @@ struct PlayerView: View {
           playerSeekSlider
           verticalStereoMeters
           Spacer()
+          csvAccessRow
+            .padding(.horizontal, 20)
         }
         .padding(.bottom, 20)
       }
@@ -141,7 +147,8 @@ struct PlayerView: View {
           editTemperature: $editTemperature,
           editHumidity: $editHumidity,
           editNote: $editNote,
-          csvURL: currentURL.deletingPathExtension().appendingPathExtension("csv"),
+          csvURL: companionCSVURL,
+          showsCSVSection: true,
           recordingFileStore: recordingFileStore,
           onSave: saveChanges
         )
@@ -251,6 +258,7 @@ struct PlayerView: View {
   }
 
   private func loadCSVData() {
+    companionCSVURL = recordingDetailsController.companionCSV(for: currentURL)
     csvRecords = recordingDetailsController.speedRecords(for: currentURL)
     if csvRecords.isEmpty {
       currentSpeed = ""
@@ -317,6 +325,14 @@ struct PlayerView: View {
       rightDecibel: audioPlayer.rightDecibel,
       spacing: 10,
       meterWidth: 40
+    )
+  }
+
+  private var csvAccessRow: some View {
+    CompanionCSVAccessLink(
+      csvURL: companionCSVURL,
+      recordingFileStore: recordingFileStore,
+      style: .card
     )
   }
 }

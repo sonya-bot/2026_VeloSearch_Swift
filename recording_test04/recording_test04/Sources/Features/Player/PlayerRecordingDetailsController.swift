@@ -79,6 +79,11 @@ final class PlayerRecordingDetailsController {
     }
   }
 
+  func companionCSV(for audioURL: URL) -> URL? {
+    let csvURL = audioURL.deletingPathExtension().appendingPathExtension("csv")
+    return recordingFileStore.fileExists(at: csvURL) ? csvURL : nil
+  }
+
   private func persist(_ details: RecordingDetails, for fileName: String) {
     userDefaults.set(details.note, forKey: "\(fileName)_note")
     userDefaults.set(details.experimenter, forKey: "\(fileName)_experimenter")

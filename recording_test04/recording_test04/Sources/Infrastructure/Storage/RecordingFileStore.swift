@@ -266,6 +266,12 @@ final class RecordingFileStore: RecordingFileStoring {
     try String(contentsOf: url, encoding: .utf8)
   }
 
+  func fileExists(at url: URL) -> Bool {
+    var isDirectory = ObjCBool(false)
+    return fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
+      && !isDirectory.boolValue
+  }
+
   func directoryExists(at url: URL) -> Bool {
     var isDirectory = ObjCBool(false)
     return fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
