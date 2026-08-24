@@ -9,6 +9,16 @@ enum AudioIOConfigurationInspector {
     let output = session.currentRoute.outputs.first
     let isBuiltIn =
       input?.portType == .builtInMic || (input == nil && selection.inputDevice == .builtIn)
+    let hardwareInputChannelCount = max(Int(session.inputNumberOfChannels), 1)
+    let recordingChannelCount: Int
+    switch selection.channelMode {
+    case .automatic:
+      recordingChannelCount = hardwareInputChannelCount
+    case .mono:
+      recordingChannelCount = 1
+    case .stereo:
+      recordingChannelCount = 2
+    }
 
     return ActiveAudioConfiguration(
       inputName: input?.portName ?? selection.inputDevice.label,
@@ -19,7 +29,8 @@ enum AudioIOConfigurationInspector {
       outputName: output?.portName ?? "iPhone",
       outputConnection: connectionLabel(for: output?.portType, fallback: "iPhone"),
       sampleRate: session.sampleRate,
-      channelCount: max(Int(session.inputNumberOfChannels), 1),
+      channelCount: recordingChannelCount,
+      hardwareInputChannelCount: hardwareInputChannelCount,
       isBuiltInInput: isBuiltIn,
       orientation: selection.orientation,
       micSource: selection.micSource
@@ -34,10 +45,13 @@ enum AudioIOConfigurationInspector {
     guard let input = session.currentRoute.inputs.first else {
       throw AudioIOError.configurationNotEstablished("入力経路なし")
     }
-    let hasExpectedInput =
-      selection.inputDevice == .builtIn
-      ? input.portType == .builtInMic
-      : input.portType != .builtInMic
+    let hasExpectedInput: Bool
+    if let expectedUID = selection.inputDeviceUID {
+      hasExpectedInput = input.uid == expectedUID
+    } else {
+      hasExpectedInput = inputOption(for: input.portType) == selection.inputDevice
+        || selection.inputDevice == .external && input.portType != .builtInMic
+    }
     guard hasExpectedInput else {
       throw AudioIOError.configurationNotEstablished("入力デバイス不一致")
     }
@@ -57,12 +71,17 @@ enum AudioIOConfigurationInspector {
     guard let output = session.currentRoute.outputs.first else {
       throw AudioIOError.configurationNotEstablished("出力経路なし")
     }
-    let hasExpectedOutput =
-      selection.outputDevice == .speaker
-      ? output.portType == .builtInSpeaker
-      : output.portType != .builtInSpeaker
+    let hasExpectedOutput: Bool
+    if let expectedUID = selection.outputDeviceUID {
+      hasExpectedOutput = output.uid == expectedUID
+    } else {
+      hasExpectedOutput = outputOption(for: output.portType) == selection.outputDevice
+    }
     guard hasExpectedOutput else {
-      throw AudioIOError.configurationNotEstablished("出力デバイス不一致")
+      let currentOutput = connectionLabel(for: output.portType, fallback: output.portName)
+      throw AudioIOError.configurationNotEstablished(
+        "\(selection.outputDevice.label)出力が未選択（現在: \(currentOutput)）"
+      )
     }
   }
 
@@ -74,8 +93,8 @@ enum AudioIOConfigurationInspector {
     if channelMode == .stereo, actualChannelCount < 2 {
       throw AudioIOError.configurationNotEstablished("Stereo入力が1chで成立")
     }
-    if channelMode == .mono, actualChannelCount != 1 {
-      throw AudioIOError.configurationNotEstablished("Mono入力が\(actualChannelCount)chで成立")
+    if channelMode == .mono, actualChannelCount < 1 {
+      throw AudioIOError.configurationNotEstablished("Mono入力を利用できません")
     }
   }
 
@@ -108,6 +127,25 @@ enum AudioIOConfigurationInspector {
     case .airPlay: return "AirPlay"
     case .none: return fallback
     default: return "External"
+    }
+  }
+
+  static func inputOption(for portType: AVAudioSession.Port) -> InputDeviceOption {
+    switch portType {
+    case .builtInMic: return .builtIn
+    case .usbAudio: return .usb
+    case .bluetoothHFP: return .bluetooth
+    case .headsetMic, .lineIn: return .wired
+    default: return .external
+    }
+  }
+
+  static func outputOption(for portType: AVAudioSession.Port) -> OutputDeviceOption {
+    switch portType {
+    case .builtInSpeaker: return .speaker
+    case .usbAudio: return .usb
+    case .bluetoothA2DP: return .bluetooth
+    default: return .other
     }
   }
 }

@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import CoreML
 import Foundation
 import Observation
@@ -9,6 +10,7 @@ enum DetectionState {
   case safe
   case uncertain
   case detect
+  case unavailable
 
   var title: String {
     switch self {
@@ -16,6 +18,7 @@ enum DetectionState {
     case .safe: return "Safe"
     case .uncertain: return "Uncertain"
     case .detect: return "Detect"
+    case .unavailable: return "Audio I/O Error"
     }
   }
   var themeColor: Color {
@@ -24,6 +27,7 @@ enum DetectionState {
     case .safe: return .green
     case .uncertain: return .orange
     case .detect: return .red
+    case .unavailable: return .red
     }
   }
 }
@@ -141,6 +145,7 @@ final class DetectionController {
   var pendingGroundTruth: String = "FalseDetect"
   var nextEventID: Int = 1
   var resultClearTask: Task<Void, Never>?
+  private var routeInvalidationCancellable: AnyCancellable?
   var isWarningArmed = true
   let resultDisplaySeconds: TimeInterval = 3.0
 
@@ -150,6 +155,14 @@ final class DetectionController {
   ) {
     self.recordingFileStore = recordingFileStore
     self.audioIOController = audioIOController
+    routeInvalidationCancellable = NotificationCenter.default.publisher(
+      for: .audioIORouteBecameInvalid
+    )
+    .sink { [weak self] _ in
+      Task { @MainActor [weak self] in
+        self?.audioRouteBecameInvalid()
+      }
+    }
   }
 
   @MainActor
@@ -163,8 +176,6 @@ final class DetectionController {
     self.currentMicSource = micSource
     self.currentDirectionTag = directionTag.rawValue
     self.currentGroundTruth = directionTag == .none ? "FalseDetect" : directionTag.rawValue
-    let audioSession = AVAudioSession.sharedInstance()
-
     do {
       // WAVと2種類のCSVが同じSceneへ保存されるよう、開始時のURLを保持する。
       let recordingFile = try recordingFileStore.makeRecordingURL(prefix: "Detecting")
@@ -172,14 +183,10 @@ final class DetectionController {
       self.currentRecordingDirectory = recordingFile.url.deletingLastPathComponent()
       let audioFilename = recordingFile.url
 
-      try audioSession.setCategory(
-        .playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
-      try audioSession.setPreferredSampleRate(targetFormat.sampleRate)
-      if audioSession.maximumInputNumberOfChannels >= targetFormat.channelCount {
-        try audioSession.setPreferredInputNumberOfChannels(Int(targetFormat.channelCount))
-      }
-      try audioSession.setActive(true)
-      try configureInputSession(audioSession, orientation: orientation, micSource: micSource)
+      _ = try audioIOController.configureForRecording(
+        requiresStereo: true,
+        allowsPlayback: true
+      )
 
       let inputNode = audioEngine.inputNode
       let inputFormat = inputNode.inputFormat(forBus: 0)
@@ -302,6 +309,13 @@ final class DetectionController {
     guard isAudioConfigurationLocked else { return }
     audioIOController.unlockConfiguration()
     isAudioConfigurationLocked = false
+  }
+
+  @MainActor
+  private func audioRouteBecameInvalid() {
+    guard isRecording else { return }
+    stopDetecting()
+    state = .unavailable
   }
 
 }

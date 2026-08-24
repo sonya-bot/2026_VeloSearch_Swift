@@ -55,43 +55,6 @@ extension DetectionController {
     isTestSoundPlaying = false
   }
 
-  func configureInputSession(
-    _ audioSession: AVAudioSession,
-    orientation: String,
-    micSource: String
-  ) throws {
-    // Monitoring画面と同じ条件で録音するため、
-    // 内蔵マイクの面とステレオ指向性を明示する。
-    if let availableInputs = audioSession.availableInputs,
-      let builtInMic = availableInputs.first(where: { $0.portType == .builtInMic }),
-      let dataSources = builtInMic.dataSources
-    {
-      let targetOrientation: AVAudioSession.Orientation = (micSource == "背面") ? .back : .front
-
-      if let selectedDataSource = dataSources.first(where: { $0.orientation == targetOrientation })
-      {
-        try builtInMic.setPreferredDataSource(selectedDataSource)
-
-        if let supportedPatterns = selectedDataSource.supportedPolarPatterns,
-          supportedPatterns.contains(.stereo)
-        {
-          try selectedDataSource.setPreferredPolarPattern(.stereo)
-        } else {
-          AppLogger.audio.notice("選択したマイクはステレオ入力に対応していません")
-        }
-
-        try audioSession.setPreferredInput(builtInMic)
-      }
-    }
-
-    // 端末向きはマイク選択後に反映する。順序はMonitoring画面と揃える。
-    if orientation == "縦" {
-      try audioSession.setPreferredInputOrientation(.portrait)
-    } else {
-      try audioSession.setPreferredInputOrientation(.landscapeRight)
-    }
-  }
-
   func convertBuffer(
     _ buffer: AVAudioPCMBuffer,
     converter: AVAudioConverter,

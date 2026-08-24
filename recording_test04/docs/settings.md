@@ -30,11 +30,12 @@ Detect判定時に選択されたSystem Sound IDを使用します。連続し�
 
 ### Audio Input / Output
 
-入出力デバイスと録音形式は全タブ共通です。入力・出力はiPhoneまたは接続デバイス、録音形式は
-Automatic／Mono／Stereoから選択します。現在成立している経路は各タブ共通の表示専用モーダルで
-確認できます。設定変更時に選択内容をオーディオセッションへ適用し、実際に成立した入力、出力、
-チャンネル数、マイク構成を検証します。検証に成功した場合だけ設定値を保存し、失敗した場合は直前の
-確定設定へ戻して理由を表示します。計測中は設定を変更できません。
+入出力デバイスと録音形式は全タブ共通です。入力は接続中の具体的な機器、出力はiOSのシステム経路
+選択画面からiPhone、USB、Bluetoothなどを選択します。録音形式はAutomatic／Mono／Stereoから
+選択します。現在成立している経路は各タブ共通の表示専用モーダルで
+確認できます。入力変更時に選択内容をオーディオセッションへ適用し、具体的なポートUID、出力種別、
+チャンネル数、マイク構成を検証します。BluetoothやUSBの出力はアプリから強制せず、システム経路
+選択後の実経路を保存します。計測中は設定を変更できません。
 
 iPhone内蔵マイクでは、複数マイクによるStereo構成を維持するため`.default`セッションモードを
 使用します。USBなどの外部入力では、信号処理を抑える`.measurement`モードを使用します。
@@ -43,6 +44,7 @@ iPhone内蔵マイクでは、複数マイクによるStereo構成を維持す�
 表示し、iPhone入力では端末向きをアイコンで区別します。Stereo時だけチャンネル詳細を表示し、
 iPhone入力では`Back + Bottom`または`Front + Bottom`、外部入力では`L / R`とします。
 適用中は`確認中`、経路が成立していない場合は`利用不可`として、未確認の状態をMonoとは表示しません。
+計測開始時は成立済みの経路を再設定せず検証し、実行中に経路が変わった場合は計測を停止します。
 
 端末の向きとマイク構成もこの画面へ統合します。iPhone入力時のみ端末の向きを表示し、
 iPhoneかつStereo指定時のみマイク構成への導線を表示します。Settings直下には重複項目を
@@ -76,17 +78,19 @@ ONにするとルート画面の2番目のタブがRecordingsからMonitorings�
 
 - キー：`selectedInputDevice`
 - 初期値：`iPhone`
-- 選択肢：`iPhone`、`External`
+- 選択肢：現在接続中のiPhone、USB、Bluetooth HFP、有線またはその他の入力機器
+- 補助キー：`selectedInputDeviceUID`
 
-Detectingsは機能要件としてiPhoneのステレオ入力を使用し、その他の計測機能は共通設定を使用します。
+Detectingsは機能要件として、共通設定で選択した入力に2チャンネルを要求します。
 
 #### 再生デバイス
 
 - キー：`selectedOutputDevice`
 - 初期値：`iPhone`
-- 選択肢：`iPhone`、`External`
+- 選択肢：システム経路選択画面に表示されるiPhone、USB、Bluetoothなど
+- 補助キー：`selectedOutputDeviceUID`
 
-接続経路が成立しない場合は変更を確定せず、直前の設定へ戻してエラーを表示します。
+選択した具体的な出力経路が成立しない場合は利用不可として、再選択を求めます。
 
 #### テスト音源
 
@@ -130,7 +134,9 @@ DefaultとすべてのSceneから`Dev_`で始まるCSVを収集し、更新日�
 | `micSource` | 前面／背面マイク |
 | `isMonitoringEnabled` | モニタリング有効化 |
 | `selectedInputDevice` | 共通入力 |
+| `selectedInputDeviceUID` | 選択した入力ポートUID |
 | `selectedOutputDevice` | 共通出力 |
+| `selectedOutputDeviceUID` | 選択した出力ポートUID |
 | `recordingChannelMode` | Automatic／Mono／Stereo |
 | `measurementDirectionTag` | Detecting／Monitoring／Analyze共通方向タグ |
 | `monitoringRepeatCount` | Monitoring実行回数 |

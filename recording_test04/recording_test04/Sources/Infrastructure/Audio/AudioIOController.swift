@@ -10,6 +10,8 @@ final class AudioIOController: ObservableObject {
   private let selectionStore: AudioIOSelectionStore
   private let audioSession: AVAudioSession
   private var configurationLockCount = 0
+  private var routeChangeCancellable: AnyCancellable?
+  private var routeChangeTask: Task<Void, Never>?
 
   init(
     userDefaults: UserDefaults = .standard,
@@ -22,25 +24,37 @@ final class AudioIOController: ObservableObject {
       from: audioSession,
       selection: selectionStore.selection
     )
-  }
-
-  func refresh() {
-    guard configurationStatus != .applying else { return }
-    let selection = storedSelection
-    activeConfiguration = AudioIOConfigurationInspector.configuration(
-      from: audioSession,
-      selection: selection
+    routeChangeCancellable = NotificationCenter.default.publisher(
+      for: AVAudioSession.routeChangeNotification
     )
-    do {
-      try validateEstablishedConfiguration(for: selection, allowsPlayback: true)
-      configurationStatus = .ready
-    } catch {
-      configurationStatus = .unavailable(error.localizedDescription)
+    .sink { [weak self] _ in
+      Task { @MainActor [weak self] in
+        self?.scheduleRouteValidation()
+      }
     }
   }
 
   var storedSelection: AudioIOSelection {
     selectionStore.selection
+  }
+
+  var availableInputDevices: [AudioInputDevice] {
+    (audioSession.availableInputs ?? []).map { input in
+      AudioInputDevice(
+        id: input.uid,
+        name: input.portName,
+        connection: AudioIOConfigurationInspector.inputOption(for: input.portType)
+      )
+    }
+  }
+
+  var currentOutputRouteUID: String? {
+    audioSession.currentRoute.outputs.first?.uid
+  }
+
+  func refresh() {
+    guard configurationStatus != .applying else { return }
+    updateStatus(for: storedSelection)
   }
 
   func applyStoredSelection() async {
@@ -59,32 +73,30 @@ final class AudioIOController: ObservableObject {
     await Task.yield()
 
     do {
-      _ = try configure(selection: selection, allowsPlayback: true)
+      let appliedSelection = try configure(selection: selection)
       try await waitForEstablishedConfiguration(
-        selection: selection,
-        allowsPlayback: true
+        selection: appliedSelection,
+        allowsPlayback: appliedSelection.outputDevice == .speaker
       )
-      selectionStore.save(selection)
-      configurationStatus = .ready
+      selectionStore.save(appliedSelection)
+      updateStatus(for: appliedSelection)
       return true
     } catch {
       let applicationError = error
-      do {
-        _ = try configure(selection: previousSelection, allowsPlayback: true)
-        try await waitForEstablishedConfiguration(
-          selection: previousSelection,
-          allowsPlayback: true
-        )
-        configurationStatus = .rejected(applicationError.localizedDescription)
-      } catch {
-        activeConfiguration = AudioIOConfigurationInspector.configuration(
-          from: audioSession,
-          selection: previousSelection
-        )
-        configurationStatus = .unavailable(applicationError.localizedDescription)
-      }
+      await restore(previousSelection: previousSelection, applicationError: applicationError)
       return false
     }
+  }
+
+  func adoptCurrentOutputRoute() {
+    guard configurationLockCount == 0, let output = audioSession.currentRoute.outputs.first else {
+      return
+    }
+    var selection = storedSelection
+    selection.outputDevice = AudioIOConfigurationInspector.outputOption(for: output.portType)
+    selection.outputDeviceUID = output.uid
+    selectionStore.save(selection)
+    updateStatus(for: selection)
   }
 
   func configurationIssue(
@@ -92,30 +104,16 @@ final class AudioIOController: ObservableObject {
     requiresStereo: Bool = false,
     allowsPlayback: Bool = false
   ) -> String? {
-    let selection = storedSelection
-    let inputOption = requiresBuiltInInput ? InputDeviceOption.builtIn : selection.inputDevice
-    let inputs = audioSession.availableInputs ?? []
-    guard !inputs.isEmpty else { return nil }
-    let inputIsAvailable = inputs.contains {
-      inputOption == .builtIn ? $0.portType == .builtInMic : $0.portType != .builtInMic
+    let selection = requiredSelection(
+      requiresBuiltInInput: requiresBuiltInInput,
+      requiresStereo: requiresStereo
+    )
+    do {
+      try validateEstablishedConfiguration(for: selection, allowsPlayback: allowsPlayback)
+      return nil
+    } catch {
+      return error.localizedDescription
     }
-    guard inputIsAvailable else { return "選択した入力デバイスが接続されていません。" }
-
-    let channelMode = requiresStereo ? RecordingChannelMode.stereo : selection.channelMode
-    let maximumChannelCount = audioSession.maximumInputNumberOfChannels
-    if channelMode == .stereo && maximumChannelCount > 0 && maximumChannelCount < 2 {
-      return "選択した入力ではStereo録音を利用できません。"
-    }
-
-    let outputOption = allowsPlayback ? selection.outputDevice : .speaker
-    if allowsPlayback && outputOption == .external {
-      guard let output = audioSession.currentRoute.outputs.first,
-        output.portType != .builtInSpeaker
-      else {
-        return "外部出力をiOSのオーディオ経路で選択してください。"
-      }
-    }
-    return nil
   }
 
   @discardableResult
@@ -124,21 +122,19 @@ final class AudioIOController: ObservableObject {
     requiresStereo: Bool = false,
     allowsPlayback: Bool = false
   ) throws -> ActiveAudioConfiguration {
-    var selection = storedSelection
-    if requiresBuiltInInput {
-      selection.inputDevice = .builtIn
-    }
-    if requiresStereo {
-      selection.channelMode = .stereo
-    }
-    if !allowsPlayback {
-      selection.outputDevice = .speaker
-    }
-
-    let configuration = try configure(selection: selection, allowsPlayback: allowsPlayback)
+    let selection = requiredSelection(
+      requiresBuiltInInput: requiresBuiltInInput,
+      requiresStereo: requiresStereo
+    )
     try validateEstablishedConfiguration(for: selection, allowsPlayback: allowsPlayback)
-    configurationStatus = .ready
-    return configuration
+    activeConfiguration = AudioIOConfigurationInspector.configuration(
+      from: audioSession,
+      selection: selection
+    )
+    if allowsPlayback {
+      configurationStatus = .ready
+    }
+    return activeConfiguration
   }
 
   func lockConfiguration() {
@@ -149,39 +145,38 @@ final class AudioIOController: ObservableObject {
     configurationLockCount = max(configurationLockCount - 1, 0)
   }
 
-  private func configure(
-    selection: AudioIOSelection,
-    allowsPlayback: Bool
-  ) throws -> ActiveAudioConfiguration {
-    let inputOption = selection.inputDevice
-    let outputOption = allowsPlayback ? selection.outputDevice : .speaker
-    let channelMode = selection.channelMode
-
-    let options: AVAudioSession.CategoryOptions =
-      outputOption == .external ? [.allowBluetoothA2DP] : [.defaultToSpeaker]
-    let sessionMode: AVAudioSession.Mode = inputOption == .builtIn ? .default : .measurement
+  private func configure(selection: AudioIOSelection) throws -> AudioIOSelection {
+    let options = categoryOptions(for: selection.outputDevice)
+    let sessionMode: AVAudioSession.Mode =
+      selection.inputDevice == .builtIn ? .default : .measurement
     try audioSession.setCategory(.playAndRecord, mode: sessionMode, options: options)
     try audioSession.setActive(true)
 
-    if outputOption == .speaker {
+    if selection.outputDevice == .speaker {
       try audioSession.overrideOutputAudioPort(.speaker)
     } else {
       try audioSession.overrideOutputAudioPort(.none)
     }
 
-    let input = try preferredInput(for: inputOption)
+    let input = try preferredInput(for: selection)
+    var appliedSelection = selection
+    appliedSelection.inputDevice = AudioIOConfigurationInspector.inputOption(
+      for: input.portType
+    )
+    appliedSelection.inputDeviceUID = input.uid
+
     let isBuiltIn = input.portType == .builtInMic
     if isBuiltIn {
       try configureBuiltInDataSource(
         on: input,
-        channelMode: channelMode,
+        channelMode: selection.channelMode,
         micSource: selection.micSource
       )
     }
     try audioSession.setPreferredInput(input)
 
     let requestedChannels = try requestedChannelCount(
-      for: channelMode,
+      for: selection.channelMode,
       maximumChannelCount: audioSession.maximumInputNumberOfChannels
     )
     try audioSession.setPreferredInputNumberOfChannels(requestedChannels)
@@ -194,26 +189,40 @@ final class AudioIOController: ObservableObject {
 
     activeConfiguration = AudioIOConfigurationInspector.configuration(
       from: audioSession,
-      selection: selection
+      selection: appliedSelection
     )
-    return activeConfiguration
+    return appliedSelection
   }
 
-  private func preferredInput(for option: InputDeviceOption) throws -> AVAudioSessionPortDescription
-  {
+  private func categoryOptions(
+    for outputDevice: OutputDeviceOption
+  ) -> AVAudioSession.CategoryOptions {
+    var options: AVAudioSession.CategoryOptions = [.allowBluetoothA2DP]
+    if outputDevice == .speaker {
+      options.insert(.defaultToSpeaker)
+    }
+    return options
+  }
+
+  private func preferredInput(
+    for selection: AudioIOSelection
+  ) throws -> AVAudioSessionPortDescription {
     let inputs = audioSession.availableInputs ?? []
-    switch option {
-    case .builtIn:
-      guard let input = inputs.first(where: { $0.portType == .builtInMic }) else {
-        throw AudioIOError.inputUnavailable(option.rawValue)
-      }
-      return input
-    case .external:
-      guard let input = inputs.first(where: { $0.portType != .builtInMic }) else {
-        throw AudioIOError.inputUnavailable(option.rawValue)
-      }
+    if let inputDeviceUID = selection.inputDeviceUID,
+      let input = inputs.first(where: { $0.uid == inputDeviceUID })
+    {
       return input
     }
+
+    let input = inputs.first { candidate in
+      let candidateOption = AudioIOConfigurationInspector.inputOption(for: candidate.portType)
+      return candidateOption == selection.inputDevice
+        || selection.inputDevice == .external && candidate.portType != .builtInMic
+    }
+    guard let input else {
+      throw AudioIOError.inputUnavailable(selection.inputDevice.label)
+    }
+    return input
   }
 
   private func configureBuiltInDataSource(
@@ -229,15 +238,17 @@ final class AudioIOController: ObservableObject {
     }
     try input.setPreferredDataSource(dataSource)
 
-    if channelMode != .mono {
-      guard dataSource.supportedPolarPatterns?.contains(.stereo) == true else {
-        if channelMode == .stereo {
-          throw AudioIOError.stereoPolarPatternUnavailable(micSource.rawValue)
-        }
-        return
-      }
-      try dataSource.setPreferredPolarPattern(.stereo)
+    if channelMode == .mono {
+      try dataSource.setPreferredPolarPattern(nil)
+      return
     }
+    guard dataSource.supportedPolarPatterns?.contains(.stereo) == true else {
+      if channelMode == .stereo {
+        throw AudioIOError.stereoPolarPatternUnavailable(micSource.rawValue)
+      }
+      return
+    }
+    try dataSource.setPreferredPolarPattern(.stereo)
   }
 
   private func requestedChannelCount(
@@ -255,6 +266,21 @@ final class AudioIOController: ObservableObject {
       }
       return 2
     }
+  }
+
+  private func requiredSelection(
+    requiresBuiltInInput: Bool,
+    requiresStereo: Bool
+  ) -> AudioIOSelection {
+    var selection = storedSelection
+    if requiresBuiltInInput {
+      selection.inputDevice = .builtIn
+      selection.inputDeviceUID = nil
+    }
+    if requiresStereo {
+      selection.channelMode = .stereo
+    }
+    return selection
   }
 
   private func validateEstablishedConfiguration(
@@ -295,5 +321,54 @@ final class AudioIOController: ObservableObject {
 
     throw lastValidationError
       ?? AudioIOError.configurationNotEstablished("経路確定タイムアウト")
+  }
+
+  private func updateStatus(for selection: AudioIOSelection) {
+    activeConfiguration = AudioIOConfigurationInspector.configuration(
+      from: audioSession,
+      selection: selection
+    )
+    do {
+      try validateEstablishedConfiguration(for: selection, allowsPlayback: true)
+      configurationStatus = .ready
+    } catch {
+      configurationStatus = .unavailable(error.localizedDescription)
+    }
+  }
+
+  private func restore(
+    previousSelection: AudioIOSelection,
+    applicationError: Error
+  ) async {
+    do {
+      let restoredSelection = try configure(selection: previousSelection)
+      try await waitForEstablishedConfiguration(
+        selection: restoredSelection,
+        allowsPlayback: restoredSelection.outputDevice == .speaker
+      )
+      selectionStore.save(restoredSelection)
+      activeConfiguration = AudioIOConfigurationInspector.configuration(
+        from: audioSession,
+        selection: restoredSelection
+      )
+      configurationStatus = .rejected(applicationError.localizedDescription)
+    } catch {
+      activeConfiguration = AudioIOConfigurationInspector.configuration(
+        from: audioSession,
+        selection: previousSelection
+      )
+      configurationStatus = .unavailable(applicationError.localizedDescription)
+    }
+  }
+
+  private func scheduleRouteValidation() {
+    routeChangeTask?.cancel()
+    routeChangeTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: 250_000_000)
+      guard let self, !Task.isCancelled else { return }
+      refresh()
+      guard configurationLockCount > 0, configurationStatus != .ready else { return }
+      NotificationCenter.default.post(name: .audioIORouteBecameInvalid, object: self)
+    }
   }
 }

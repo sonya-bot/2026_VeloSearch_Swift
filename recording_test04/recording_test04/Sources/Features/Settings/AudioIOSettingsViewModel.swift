@@ -10,6 +10,8 @@ final class AudioIOSettingsViewModel: ObservableObject {
   private let audioIOController: AudioIOController
   private var confirmedSelection: AudioIOSelection
   private var applicationTask: Task<Void, Never>?
+  private var outputRouteConfirmationTask: Task<Void, Never>?
+  private var outputRouteUIDBeforeSelection: String?
 
   init(audioIOController: AudioIOController) {
     self.audioIOController = audioIOController
@@ -20,22 +22,61 @@ final class AudioIOSettingsViewModel: ObservableObject {
 
   deinit {
     applicationTask?.cancel()
+    outputRouteConfirmationTask?.cancel()
   }
 
   func applyStoredSelectionIfNeeded() async {
     guard audioIOController.configurationStatus == .unverified else { return }
     isApplying = true
     await audioIOController.applyStoredSelection()
+    let storedSelection = audioIOController.storedSelection
+    selection = storedSelection
+    confirmedSelection = storedSelection
     errorMessage = audioIOController.configurationStatus.message
     isApplying = false
   }
 
-  func selectInputDevice(_ inputDevice: InputDeviceOption) {
-    applyChange { $0.inputDevice = inputDevice }
+  func selectInputDevice(withID inputDeviceID: String) {
+    guard
+      let inputDevice = audioIOController.availableInputDevices.first(where: {
+        $0.id == inputDeviceID
+      })
+    else {
+      errorMessage = "選択した入力デバイスが接続されていません。"
+      return
+    }
+    applyChange {
+      $0.inputDevice = inputDevice.connection
+      $0.inputDeviceUID = inputDevice.id
+    }
   }
 
-  func selectOutputDevice(_ outputDevice: OutputDeviceOption) {
-    applyChange { $0.outputDevice = outputDevice }
+  func outputRouteSelectionStarted() {
+    outputRouteConfirmationTask?.cancel()
+    outputRouteUIDBeforeSelection = audioIOController.currentOutputRouteUID
+  }
+
+  func outputRouteSelectionCompleted() {
+    outputRouteConfirmationTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: 300_000_000)
+      guard let self, !Task.isCancelled else { return }
+      confirmOutputRouteSelection()
+    }
+  }
+
+  private func confirmOutputRouteSelection() {
+    guard !isApplying else { return }
+    defer { outputRouteUIDBeforeSelection = nil }
+    guard outputRouteUIDBeforeSelection != audioIOController.currentOutputRouteUID else {
+      audioIOController.refresh()
+      errorMessage = audioIOController.configurationStatus.message
+      return
+    }
+    audioIOController.adoptCurrentOutputRoute()
+    let storedSelection = audioIOController.storedSelection
+    selection = storedSelection
+    confirmedSelection = storedSelection
+    errorMessage = audioIOController.configurationStatus.message
   }
 
   func selectChannelMode(_ channelMode: RecordingChannelMode) {
@@ -65,11 +106,13 @@ final class AudioIOSettingsViewModel: ObservableObject {
       guard !Task.isCancelled else { return }
 
       if wasApplied {
-        confirmedSelection = candidate
+        let storedSelection = audioIOController.storedSelection
+        selection = storedSelection
+        confirmedSelection = storedSelection
       } else {
         selection = confirmedSelection
-        errorMessage = audioIOController.configurationStatus.message
       }
+      errorMessage = audioIOController.configurationStatus.message
       isApplying = false
     }
   }

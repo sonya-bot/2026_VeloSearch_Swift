@@ -1,24 +1,54 @@
 import Foundation
 
+extension Notification.Name {
+  static let audioIORouteBecameInvalid = Notification.Name("audioIORouteBecameInvalid")
+}
+
 enum InputDeviceOption: String, CaseIterable, Identifiable {
   case builtIn = "iPhone"
+  case usb = "USB"
+  case bluetooth = "Bluetooth"
+  case wired = "Wired"
   case external = "connected device"
 
   var id: Self { self }
 
   var label: String {
-    self == .builtIn ? "iPhone" : "External"
+    switch self {
+    case .builtIn: return "iPhone"
+    case .usb: return "USB"
+    case .bluetooth: return "Bluetooth"
+    case .wired: return "Wired"
+    case .external: return "External"
+    }
   }
 }
 
 enum OutputDeviceOption: String, CaseIterable, Identifiable {
   case speaker = "iPhone"
-  case external = "connected device"
+  case bluetooth = "connected device"
+  case usb = "USB"
+  case other = "Other"
 
   var id: Self { self }
 
   var label: String {
-    self == .speaker ? "iPhone" : "External"
+    switch self {
+    case .speaker: return "iPhone"
+    case .bluetooth: return "Bluetooth"
+    case .usb: return "USB"
+    case .other: return "Other"
+    }
+  }
+}
+
+struct AudioInputDevice: Identifiable, Equatable {
+  let id: String
+  let name: String
+  let connection: InputDeviceOption
+
+  var label: String {
+    name == connection.label ? name : "\(connection.label) · \(name)"
   }
 }
 
@@ -46,7 +76,9 @@ enum MicSourceOption: String, CaseIterable, Identifiable {
 
 struct AudioIOSelection: Equatable {
   var inputDevice: InputDeviceOption
+  var inputDeviceUID: String?
   var outputDevice: OutputDeviceOption
+  var outputDeviceUID: String?
   var channelMode: RecordingChannelMode
   var orientation: DeviceOrientationOption
   var micSource: MicSourceOption
@@ -80,6 +112,7 @@ struct ActiveAudioConfiguration: Equatable {
   let outputConnection: String
   let sampleRate: Double
   let channelCount: Int
+  let hardwareInputChannelCount: Int
   let isBuiltInInput: Bool
   let orientation: DeviceOrientationOption
   let micSource: MicSourceOption

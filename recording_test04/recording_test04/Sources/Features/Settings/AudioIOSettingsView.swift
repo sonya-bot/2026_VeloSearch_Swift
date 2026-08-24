@@ -16,12 +16,12 @@ struct AudioIOSettingsView: View {
       Section("Current Route") {
         routeRow(
           title: "Output",
-          value: audioIOController.activeConfiguration.outputConnection,
+          value: outputRouteDescription,
           systemImage: audioIOController.activeConfiguration.outputIconName
         )
         routeRow(
           title: "Input",
-          value: audioIOController.activeConfiguration.inputConnection,
+          value: inputRouteDescription,
           systemImage: audioIOController.activeConfiguration.inputIconName
         )
         routeRow(
@@ -32,22 +32,25 @@ struct AudioIOSettingsView: View {
       }
 
       Section {
-        Picker("出力デバイス", selection: outputDeviceBinding) {
-          ForEach(OutputDeviceOption.allCases) { option in
-            Text(option.label).tag(option)
-          }
+        HStack {
+          Text("出力デバイス")
+          Spacer()
+          SystemAudioRoutePicker(
+            onRouteSelectionStarted: viewModel.outputRouteSelectionStarted,
+            onRouteSelectionCompleted: viewModel.outputRouteSelectionCompleted
+          )
+            .frame(width: 44, height: 36)
         }
-        .pickerStyle(.navigationLink)
       } header: {
         Text("Output")
       } footer: {
-        Text("Bluetoothなどの出力先は、iOSで現在選択されている経路を使用します。")
+        Text("システムの出力一覧からiPhone、USB、Bluetoothを選択します。")
       }
 
       Section {
         Picker("入力デバイス", selection: inputDeviceBinding) {
-          ForEach(InputDeviceOption.allCases) { option in
-            Text(option.label).tag(option)
+          ForEach(audioIOController.availableInputDevices) { device in
+            Text(device.label).tag(Optional(device.id))
           }
         }
         .pickerStyle(.navigationLink)
@@ -126,17 +129,27 @@ struct AudioIOSettingsView: View {
     viewModel.selection.micSource == .back ? "Back + Bottom" : "Front + Bottom"
   }
 
-  private var inputDeviceBinding: Binding<InputDeviceOption> {
-    Binding(
-      get: { viewModel.selection.inputDevice },
-      set: viewModel.selectInputDevice
+  private var inputRouteDescription: String {
+    routeDescription(
+      connection: audioIOController.activeConfiguration.inputConnection,
+      name: audioIOController.activeConfiguration.inputName
     )
   }
 
-  private var outputDeviceBinding: Binding<OutputDeviceOption> {
+  private var outputRouteDescription: String {
+    routeDescription(
+      connection: audioIOController.activeConfiguration.outputConnection,
+      name: audioIOController.activeConfiguration.outputName
+    )
+  }
+
+  private var inputDeviceBinding: Binding<String?> {
     Binding(
-      get: { viewModel.selection.outputDevice },
-      set: viewModel.selectOutputDevice
+      get: { viewModel.selection.inputDeviceUID },
+      set: { inputDeviceID in
+        guard let inputDeviceID else { return }
+        viewModel.selectInputDevice(withID: inputDeviceID)
+      }
     )
   }
 
@@ -170,5 +183,9 @@ struct AudioIOSettingsView: View {
       Text(value)
         .foregroundStyle(.secondary)
     }
+  }
+
+  private func routeDescription(connection: String, name: String) -> String {
+    connection == name ? connection : "\(connection) · \(name)"
   }
 }

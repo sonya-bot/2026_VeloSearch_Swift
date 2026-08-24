@@ -74,7 +74,8 @@ Analyze_yyyyMMdd_NN_IR_CH1.wav
 Analyze_yyyyMMdd_NN_IR_CH2.wav
 ```
 
-Monoの場合はIRをCH1だけ保存します。入力チャンネル数に応じてIRファイル数が決まります。
+Monoの場合は入力経路が2チャンネルを維持していても録音時に1チャンネルへ変換し、IRをCH1だけ
+保存します。Stereoの場合は成立した2チャンネルからCH1、CH2のIRを保存します。
 
 ### 周波数応答CSV
 

@@ -51,23 +51,43 @@ final class ESSMeasurementService {
       throw AnalyzeError.stereoInputUnavailable(Int(inputFormat.channelCount))
     }
     let actualChannelCount = min(max(Int(inputFormat.channelCount), 1), channelCount)
+    guard
+      let captureFormat = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32,
+        sampleRate: inputFormat.sampleRate,
+        channels: AVAudioChannelCount(actualChannelCount),
+        interleaved: false
+      ),
+      let inputConverter = AVAudioConverter(from: inputFormat, to: captureFormat)
+    else {
+      throw AnalyzeError.audioFormatUnavailable
+    }
     capturedChannels = Array(repeating: [], count: actualChannelCount)
 
-    let audioFile = try AVAudioFile(forWriting: outputURL, settings: inputFormat.settings)
+    let audioFile = try AVAudioFile(forWriting: outputURL, settings: captureFormat.settings)
     input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
       guard let self else { return }
+      guard
+        let captureBuffer = self.convert(
+          buffer,
+          using: inputConverter,
+          to: captureFormat
+        )
+      else {
+        return
+      }
       do {
-        try audioFile.write(from: buffer)
+        try audioFile.write(from: captureBuffer)
       } catch {
         AppLogger.storage.error("Analyze WAVの書き込みに失敗しました: \(error.localizedDescription)")
       }
-      guard let channelData = buffer.floatChannelData else { return }
+      guard let channelData = captureBuffer.floatChannelData else { return }
       self.captureLock.lock()
       for channelIndex in 0..<actualChannelCount {
         self.capturedChannels[channelIndex].append(
           contentsOf: UnsafeBufferPointer(
             start: channelData[channelIndex],
-            count: Int(buffer.frameLength)
+            count: Int(captureBuffer.frameLength)
           )
         )
       }
@@ -144,6 +164,42 @@ final class ESSMeasurementService {
       let phase = phaseScale * (exp(time * logarithmicRatio / AnalyzeConstants.sweepDuration) - 1)
       return Float(AnalyzeConstants.sweepAmplitude * sin(phase))
     }
+  }
+
+  private func convert(
+    _ buffer: AVAudioPCMBuffer,
+    using converter: AVAudioConverter,
+    to outputFormat: AVAudioFormat
+  ) -> AVAudioPCMBuffer? {
+    guard
+      let outputBuffer = AVAudioPCMBuffer(
+        pcmFormat: outputFormat,
+        frameCapacity: buffer.frameCapacity
+      )
+    else {
+      return nil
+    }
+
+    var didProvideInput = false
+    var conversionError: NSError?
+    let status = converter.convert(to: outputBuffer, error: &conversionError) { _, inputStatus in
+      guard !didProvideInput else {
+        inputStatus.pointee = .noDataNow
+        return nil
+      }
+      didProvideInput = true
+      inputStatus.pointee = .haveData
+      return buffer
+    }
+    if status == .error {
+      if let conversionError {
+        AppLogger.audio.error(
+          "Analyze入力のチャンネル変換に失敗しました: \(conversionError.localizedDescription)"
+        )
+      }
+      return nil
+    }
+    return outputBuffer.frameLength > 0 ? outputBuffer : nil
   }
 
 }

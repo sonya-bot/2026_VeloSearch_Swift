@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import Foundation
 import Observation
 import SwiftUI
@@ -36,6 +37,7 @@ final class AudioRecordingController {
   private var recordingPrefix = "Recording"
   private var recordingFinished: (() -> Void)?
   private var isAudioConfigurationLocked = false
+  private var routeInvalidationCancellable: AnyCancellable?
 
   init(
     recordingFileStore: RecordingFileStoring,
@@ -45,6 +47,14 @@ final class AudioRecordingController {
     self.recordingFileStore = recordingFileStore
     self.userDefaults = userDefaults
     self.audioIOController = audioIOController
+    routeInvalidationCancellable = NotificationCenter.default.publisher(
+      for: .audioIORouteBecameInvalid
+    )
+    .sink { [weak self] _ in
+      Task { @MainActor [weak self] in
+        self?.audioRouteBecameInvalid()
+      }
+    }
   }
 
   private enum RecordingStartError: LocalizedError {
@@ -81,10 +91,6 @@ final class AudioRecordingController {
     onFinished: (() -> Void)? = nil
   ) {
     let isMonitoringRecording = prefix == "Monitoring"
-    let outputRawValue =
-      userDefaults.string(forKey: "selectedOutputDevice")
-      ?? OutputDeviceOption.speaker.rawValue
-    let outputDevice = OutputDeviceOption(rawValue: outputRawValue) ?? .speaker
 
     do {
       // 録音開始時点のSceneと連番を固定し、録音中の設定変更から保存先を切り離す。
@@ -101,7 +107,6 @@ final class AudioRecordingController {
       audioPlayer?.stop()
       audioPlayer = nil
 
-      _ = outputDevice
       let audioConfiguration = try audioIOController.configureForRecording(
         allowsPlayback: isMonitoringRecording
       )
@@ -266,6 +271,23 @@ final class AudioRecordingController {
     guard isAudioConfigurationLocked else { return }
     audioIOController.unlockConfiguration()
     isAudioConfigurationLocked = false
+  }
+
+  private func audioRouteBecameInvalid() {
+    guard isRecording else { return }
+    let invalidRecordingURL = currentRecordingURL
+    recordingFinished = nil
+    stopRecording()
+    if let invalidRecordingURL {
+      do {
+        try recordingFileStore.deleteRecording(at: invalidRecordingURL)
+      } catch {
+        AppLogger.storage.error(
+          "経路変更後の録音ファイルを削除できませんでした: \(error.localizedDescription)"
+        )
+      }
+    }
+    measurementStatus = "Audio I/O経路変更により停止"
   }
 
   private func startMonitoring() {

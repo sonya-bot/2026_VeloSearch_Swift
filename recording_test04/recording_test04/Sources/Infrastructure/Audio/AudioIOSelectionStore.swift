@@ -12,9 +12,11 @@ struct AudioIOSelectionStore {
       inputDevice: InputDeviceOption(
         rawValue: userDefaults.string(forKey: "selectedInputDevice") ?? ""
       ) ?? .builtIn,
+      inputDeviceUID: userDefaults.string(forKey: "selectedInputDeviceUID"),
       outputDevice: OutputDeviceOption(
         rawValue: userDefaults.string(forKey: "selectedOutputDevice") ?? ""
       ) ?? .speaker,
+      outputDeviceUID: userDefaults.string(forKey: "selectedOutputDeviceUID"),
       channelMode: RecordingChannelMode(
         rawValue: userDefaults.string(forKey: "recordingChannelMode") ?? ""
       ) ?? .automatic,
@@ -29,7 +31,9 @@ struct AudioIOSelectionStore {
 
   func save(_ selection: AudioIOSelection) {
     userDefaults.set(selection.inputDevice.rawValue, forKey: "selectedInputDevice")
+    userDefaults.set(selection.inputDeviceUID, forKey: "selectedInputDeviceUID")
     userDefaults.set(selection.outputDevice.rawValue, forKey: "selectedOutputDevice")
+    userDefaults.set(selection.outputDeviceUID, forKey: "selectedOutputDeviceUID")
     userDefaults.set(selection.channelMode.rawValue, forKey: "recordingChannelMode")
     userDefaults.set(selection.orientation.rawValue, forKey: "deviceOrientation")
     userDefaults.set(selection.micSource.rawValue, forKey: "micSource")

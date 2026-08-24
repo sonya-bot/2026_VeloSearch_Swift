@@ -36,6 +36,8 @@ final class AnalyzeController: ObservableObject {
   private let service = ESSMeasurementService()
   private let analyzer = ESSAnalyzer()
   private var executionTask: Task<Void, Never>?
+  private var routeInvalidationCancellable: AnyCancellable?
+  private var routeFailureMessage: String?
 
   init(
     recordingFileStore: RecordingFileStoring,
@@ -45,6 +47,14 @@ final class AnalyzeController: ObservableObject {
     self.recordingFileStore = recordingFileStore
     self.audioIOController = audioIOController
     self.resultWriter = resultWriter
+    routeInvalidationCancellable = NotificationCenter.default.publisher(
+      for: .audioIORouteBecameInvalid
+    )
+    .sink { [weak self] _ in
+      Task { @MainActor [weak self] in
+        self?.audioRouteBecameInvalid()
+      }
+    }
   }
 
   var isRunning: Bool {
@@ -56,6 +66,7 @@ final class AnalyzeController: ObservableObject {
 
   func start(repeatCount: Int, directionTag: MeasurementDirectionTag) {
     guard !isRunning else { return }
+    routeFailureMessage = nil
     executionTask = Task { [weak self] in
       guard let self else { return }
       audioIOController.lockConfiguration()
@@ -100,7 +111,11 @@ final class AnalyzeController: ObservableObject {
         }
         state = .completed
       } catch is CancellationError {
-        state = .standby
+        if let routeFailureMessage {
+          state = .failed(routeFailureMessage)
+        } else {
+          state = .standby
+        }
       } catch {
         state = .failed(error.localizedDescription)
       }
@@ -109,6 +124,7 @@ final class AnalyzeController: ObservableObject {
   }
 
   func stop() {
+    routeFailureMessage = nil
     executionTask?.cancel()
     service.stop()
     executionTask = nil
@@ -120,6 +136,13 @@ final class AnalyzeController: ObservableObject {
       state = .countdown(seconds)
       try await Task.sleep(for: .seconds(1))
     }
+  }
+
+  private func audioRouteBecameInvalid() {
+    guard isRunning else { return }
+    routeFailureMessage = "Audio I/O経路が変更されたため測定を停止しました。"
+    service.stop()
+    executionTask?.cancel()
   }
 
 }
