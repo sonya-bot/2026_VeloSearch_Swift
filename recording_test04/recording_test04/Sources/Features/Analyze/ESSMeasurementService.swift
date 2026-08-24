@@ -104,7 +104,7 @@ final class ESSMeasurementService {
     do {
       try await Task.sleep(for: .seconds(AnalyzeConstants.preSilenceDuration))
       try Task.checkCancellation()
-      await player.scheduleBuffer(buffer)
+      player.scheduleBuffer(buffer, completionHandler: nil)
       player.play()
       try await Task.sleep(
         for: .seconds(AnalyzeConstants.sweepDuration + AnalyzeConstants.postSilenceDuration)
