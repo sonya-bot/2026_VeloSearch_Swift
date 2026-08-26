@@ -6,11 +6,14 @@
 
 ```bash
 cd recording_test04
-tuist generate --no-open
+tuist install
+./scripts/generate_project.sh
 ```
 
-生成後は`recording_test04.xcworkspace`を使用してください。SourcesやResourcesを追加した場合は
-再生成します。
+`tuist install`でFirebase Apple SDKを解決してから生成します。生成後は
+`recording_test04.xcworkspace`を使用してください。SourcesやResourcesを追加した場合は再生成します。
+生成スクリプトはFirebase Analytics由来の`StoreKit.framework`直接リンクを除外し、課金機能を
+使用しない本アプリをPersonal Teamでも実機署名できる状態にします。
 
 ## ビルド
 
@@ -119,6 +122,15 @@ Swiftファイルは原則として1行120文字以内に保ちます。
 1024×1024の元画像からiPhone／iPad用の各サイズを生成し、`Contents.json`の対応ファイル名を
 維持してください。更新後はAsset Catalogの警告がないことと、実機・Simulatorのホーム画面で
 小さいサイズでも主要図形が判別できることを確認します。
+
+## Firebase Analytics
+
+- Firebase依存関係はXcodeの生成済みプロジェクトではなく`Tuist/Package.swift`で管理します。
+- AnalyticsはIDFAを使用しない`FirebaseAnalyticsCore`を選択します。
+- Firebaseの初期化は`FirebaseAppDelegate`が担当します。
+- `GoogleService-Info.plist`はローカル設定としてGit管理から除外します。新しい開発環境やCIでは、
+  ビルド前に`recording_test04/Resources/Configuration`へ配置してください。
+- Analyticsを利用するには、Firebase Console側でも対象プロジェクトのGoogle Analyticsを有効にします。
 
 ## 権限追加
 

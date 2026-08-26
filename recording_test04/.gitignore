@@ -68,3 +68,6 @@ Derived/
 
 ### Tuist managed dependencies ###
 Tuist/.build
+
+### Local service configuration ###
+recording_test04/Resources/Configuration/GoogleService-Info.plist

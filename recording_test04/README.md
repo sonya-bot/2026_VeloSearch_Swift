@@ -36,16 +36,20 @@ Recordings、ONの場合はMonitoringsになり、Analyzeは独立したタブ�
 - iOS 18.0以降
 - iOS実機（マイク、ステレオ入力、位置情報を含む動作確認に必要）
 
-外部Swift Packageには依存していません。SwiftUI、AVFoundation、Core ML、Core Location、
-AccelerateなどのApple Frameworkを使用します。
+SwiftUI、AVFoundation、Core ML、Core Location、AccelerateなどのApple Frameworkに加え、
+Firebase Apple SDKの`FirebaseCore`とIDFAを使用しない`FirebaseAnalyticsCore`を使用します。
 
 ## セットアップ
 
 ```bash
 cd recording_test04
-tuist generate --no-open
+tuist install
+./scripts/generate_project.sh
 open recording_test04.xcworkspace
 ```
+
+生成スクリプトは、Firebase Analyticsが追加する`StoreKit.framework`のアプリターゲットへの
+直接リンクを除外します。これにより、課金機能を使用しない本アプリをPersonal Teamで実機署名できます。
 
 Xcodeで`recording_test04` schemeと実行先を選択し、ビルドまたは実行します。
 

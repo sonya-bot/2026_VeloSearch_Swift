@@ -1,3 +1,6 @@
 {
-    "sweetpad.build.xcodeWorkspacePath": "recording_test04/recording_test04.xcworkspace"
+    "sweetpad.build.xcodeWorkspacePath": "recording_test04/recording_test04.xcworkspace",
+    "sweetpad.build.scheme": "recording_test04",
+    "sweetpad.build.configuration": "Debug",
+    "sweetpad.build.allowProvisioningUpdates": false
 }

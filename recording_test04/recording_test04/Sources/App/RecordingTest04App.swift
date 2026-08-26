@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct RecordingTest04App: App {
+  @UIApplicationDelegateAdaptor(FirebaseAppDelegate.self) private var firebaseAppDelegate
   private let dependencies = AppDependencies.live
 
   init() {

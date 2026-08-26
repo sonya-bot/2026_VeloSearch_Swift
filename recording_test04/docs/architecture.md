@@ -29,6 +29,11 @@ AppRootView ─── AppRootViewModel
 `ContentView`はプレビューと既存呼び出し元のための軽量な公開エントリーポイントです。
 実際のタブ構成は`AppRootView`へ委譲します。
 
+### FirebaseAppDelegate
+
+SwiftUIのアプリライフサイクルへ`UIApplicationDelegateAdaptor`で接続し、起動時にFirebaseを
+初期化します。Analyticsには広告識別子を含まない`FirebaseAnalyticsCore`を使用します。
+
 ### AppRootView
 
 次の5タブを構成し、各Featureへ依存関係を渡します。

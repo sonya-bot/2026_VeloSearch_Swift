@@ -2,9 +2,5 @@
   "sweetpad.build.xcodeWorkspacePath": "recording_test04.xcworkspace",
   "sweetpad.build.scheme": "recording_test04",
   "sweetpad.build.configuration": "Debug",
-  "sweetpad.build.destination": {
-    "id": "F0BE5FF5-CD8F-4B87-9376-B641E2C5ADDB",
-    "type": "iOSSimulator"
-  },
   "sweetpad.build.allowProvisioningUpdates": false
 }
