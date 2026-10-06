@@ -18,6 +18,7 @@ struct CollectionsView: View {
   @State private var sceneToRename: URL?
   @State private var renamedSceneName = ""
   @State private var sceneToDelete: URL?
+  @State private var recordingToDelete: URL?
   @State private var sceneToShare: IdentifiedURL?
 
   init(recordingFileStore: RecordingFileStoring, userDefaults: UserDefaults) {
@@ -101,7 +102,7 @@ struct CollectionsView: View {
                   recordingFileStore: recordingFileStore,
                   userDefaults: userDefaults,
                   favoriteAudios: viewModel.favoriteAudios,
-                  onDelete: viewModel.deleteAudio,
+                  onDelete: { recordingToDelete = $0 },
                   onFavorite: viewModel.toggleFavorite,
                   isFavorite: viewModel.isFavorite
                 )
@@ -139,6 +140,9 @@ struct CollectionsView: View {
         }
       }
       .refreshable { viewModel.refresh() }
+      .recordingDeletionConfirmation(
+        recording: $recordingToDelete, onDeleteConfirmed: viewModel.deleteAudio
+      )
       .alert("Sceneを作成", isPresented: $showingCreateScene) {
         TextField("Scene名", text: $newSceneName)
         Button("作成") { viewModel.createScene(named: newSceneName) }

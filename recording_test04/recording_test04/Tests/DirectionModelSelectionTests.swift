@@ -66,16 +66,55 @@ struct DirectionModelSelectionTests {
   }
 
   @Test
-  func bundledCurrentModelHasCompatibleInterface() async throws {
+  func legacySelectionMigratesToCNNWithoutChangingExperimentModel() async {
+    let repository = MemoryModelSelectionRepository()
+    repository.selectedModelName = DirectionModelSelectionController.legacyModelName
+    let controller = DirectionModelSelectionController(
+      loader: TestDirectionModelLoader(names: ["CNN_CNN", "CNN_RC", "RC_CNN", "RC_RC"]),
+      repository: repository
+    )
+    await controller.prepareSelection()
+    #expect(controller.selectedModelName == "CNN_CNN")
+    #expect(repository.selectedModelName == "CNN_CNN")
+    #expect(controller.message == nil)
+  }
+
+  @Test
+  func failedLegacyMigrationDoesNotPersistAnUnusableModel() async {
+    let repository = MemoryModelSelectionRepository()
+    repository.selectedModelName = DirectionModelSelectionController.legacyModelName
+    let loader = TestDirectionModelLoader(names: ["CNN_CNN"])
+    loader.failingNames = ["CNN_CNN"]
+    let controller = DirectionModelSelectionController(loader: loader, repository: repository)
+    await controller.prepareSelection()
+    #expect(!controller.canStartMeasurement)
+    #expect(repository.selectedModelName == DirectionModelSelectionController.legacyModelName)
+  }
+
+  @Test
+  func bundleContainsExactlyFourComparisonModels() {
     let loader = DirectionModelLoadingService(bundle: .main)
-    let resource = try #require(
-      loader.resources.first { $0.id == DirectionModelSelectionController.defaultModelName })
+    #expect(loader.resources.map(\.id) == ["CNN_CNN", "CNN_RC", "RC_CNN", "RC_RC"])
+  }
+
+  @Test(arguments: ["CNN_CNN", "CNN_RC", "RC_CNN", "RC_RC"])
+  func bundledComparisonModelHasCompatibleInterface(modelName: String) async throws {
+    let loader = DirectionModelLoadingService(bundle: .main)
+    let resource = try #require(loader.resources.first { $0.id == modelName })
     let predictor = try await loader.load(resource)
     let features = try MLMultiArray(shape: [1, 5, 64, 173], dataType: .float16)
     for index in 0..<features.count { features[index] = 0 }
     let result = predictor.infer(features: features, clock: SystemMeasurementClock())
-    #expect(result.prediction?.probabilities.count == 8)
+    let prediction = try #require(result.prediction)
+    #expect(prediction.probabilities.count == 8)
+    #expect(prediction.angle >= 0 && prediction.angle <= 315 && prediction.angle % 45 == 0)
     #expect(result.started != nil && result.completed != nil)
+    let repeatedResult = predictor.infer(features: features, clock: SystemMeasurementClock())
+    let repeatedPrediction = try #require(repeatedResult.prediction)
+    #expect(
+      zip(prediction.probabilities, repeatedPrediction.probabilities).allSatisfy {
+        abs($0 - $1) < 0.001
+      })
     let invalidFeatures = try MLMultiArray(shape: [1, 2], dataType: .float16)
     let invalidResult = predictor.infer(features: invalidFeatures, clock: SystemMeasurementClock())
     #expect(invalidResult.failureKind == "incompatible_input")

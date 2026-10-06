@@ -22,7 +22,7 @@ struct PlayerView: View {
   @Environment(\.dismiss) private var dismiss
   @Environment(\.verticalSizeClass) var verticalSizeClass
 
-  @State private var showingDeleteAlert = false
+  @State private var recordingToDelete: URL?
 
   // 保存済みのデータ
   @State private var fileNote: String = ""
@@ -176,21 +176,14 @@ struct PlayerView: View {
         ShareLink(item: currentURL) {
           Image(systemName: "square.and.arrow.up")
         }
-        Button(action: { showingDeleteAlert = true }) {
+        Button(action: { recordingToDelete = currentURL }) {
           Image(systemName: "trash")
         }
       }
     }
-    .alert("Delete Recording?", isPresented: $showingDeleteAlert) {
-      Button("Delete", role: .destructive) {
-        audioPlayer.deleteAudio(audio: currentURL)
-        dismiss()
-      }
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text(
-        "Are you sure you want to delete '\(currentURL.lastPathComponent)'? This action cannot be undone."
-      )
+    .recordingDeletionConfirmation(recording: $recordingToDelete) { audioURL in
+      audioPlayer.deleteAudio(audio: audioURL)
+      dismiss()
     }
     .onAppear {
       audioPlayer.prepareAudio(audio: currentURL)

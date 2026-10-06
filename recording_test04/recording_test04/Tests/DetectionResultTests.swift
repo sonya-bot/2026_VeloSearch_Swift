@@ -30,6 +30,34 @@ struct DetectionResultTests {
   }
 
   @Test
+  func displayedModelUsesSelectionAtRestAndSessionSnapshotDuringMeasurement() async throws {
+    let controller = try makeController()
+    #expect(controller.displayedModelName == "モデル未選択")
+    let repository = MemoryModelSelectionRepository()
+    let selection = DirectionModelSelectionController(
+      loader: TestDirectionModelLoader(names: ["CNN_CNN", "RC_CNN"]), repository: repository
+    )
+    await selection.prepareSelection()
+    let defaults = try #require(UserDefaults(suiteName: UUID().uuidString))
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = RecordingFileStore(
+      fileManager: .default, userDefaults: defaults, documentsDirectory: directory)
+    let selectedController = DetectionController(
+      recordingFileStore: store, audioIOController: AudioIOController(userDefaults: defaults),
+      modelSelection: selection, clock: FixedMeasurementClock(value: 100),
+      environment: MeasurementEnvironment(
+        deviceModel: "Test", osVersion: "18", appVersion: "1", buildNumber: "1")
+    )
+    #expect(selectedController.displayedModelName == "CNN_CNN")
+    selectedController.sessionModelName = "CNN_CNN"
+    selectedController.isRecording = true
+    #expect(await selection.selectModel(named: "RC_CNN"))
+    #expect(selectedController.displayedModelName == "CNN_CNN")
+    selectedController.isRecording = false
+    #expect(selectedController.displayedModelName == "RC_CNN")
+  }
+
+  @Test
   func uiCompletionIsCapturedBeforeCSVFormatting() throws {
     let orderingClock = UIOrderingClock()
     let controller = try makeController(clock: orderingClock)

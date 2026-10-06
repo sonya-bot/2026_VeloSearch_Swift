@@ -91,6 +91,11 @@ final class DetectionController {
   var sessionPredictor: DirectionPredicting?
   var sessionModelName = ""
   var modelErrorMessage: String?
+
+  var displayedModelName: String {
+    if isRecording { return sessionModelName }
+    return modelSelection.selectedModelName ?? "モデル未選択"
+  }
   let beepDetector = BeepDetector()
   let featureExtractionQueue = DispatchQueue(
     label: "dev.tuist.recording-test04.feature-extraction",

@@ -7,7 +7,9 @@
 ### 推論モデル
 
 - キー：`selectedDirectionModelName`
-- 初期値：`20260725-010849_hybrid_Best_model_epoch59`
+- 初期値：`CNN_CNN`
+- 同梱モデル：`CNN_CNN`、`CNN_RC`、`RC_CNN`、`RC_RC`
+- 旧選択名`20260725-010849_hybrid_Best_model_epoch59`はCNN_CNNへ移行します。
 - 同梱モデルをファイル名（末尾の`.mlpackage`を除く）で表示します。
 - モデル読み込み・入出力検証に成功してから選択を保存します。計測中は変更できません。
 - 開発時の配置先は`recording_test04/Resources/models/`、実行時の保存場所はアプリBundleです。

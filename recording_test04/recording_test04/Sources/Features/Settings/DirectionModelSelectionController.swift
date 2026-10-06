@@ -4,7 +4,8 @@ import Observation
 @MainActor
 @Observable
 final class DirectionModelSelectionController {
-  static let defaultModelName = "20260725-010849_hybrid_Best_model_epoch59"
+  static let defaultModelName = "CNN_CNN"
+  static let legacyModelName = "20260725-010849_hybrid_Best_model_epoch59"
   let detectionThreshold: Float = 0.40
   let resources: [DirectionModelResource]
   private(set) var selectedModelName: String?
@@ -29,11 +30,14 @@ final class DirectionModelSelectionController {
   func prepareSelection() async {
     guard !hasPreparedSelection else { return }
     hasPreparedSelection = true
-    let requestedName = repository.selectedModelName ?? Self.defaultModelName
+    let storedName = repository.selectedModelName
+    let requestedName =
+      storedName == Self.legacyModelName
+      ? Self.defaultModelName : storedName ?? Self.defaultModelName
     if await selectModel(named: requestedName) { return }
     if requestedName != Self.defaultModelName {
       if await selectModel(named: Self.defaultModelName) {
-        message = "保存済みモデルを利用できないため、現行モデルへ戻しました。"
+        message = "保存済みモデルを利用できないため、CNN_CNNへ戻しました。"
         return
       }
     }

@@ -106,7 +106,7 @@ final class AudioPlaybackController {
   func deleteAudio(audio: URL) {
     self.stopPlayback()
     do {
-      // WAVと対応する通常CSV・Dev CSVを一組として削除する。
+      // WAVと対応する時系列・推論イベント・旧Dev CSVを一組として削除する。
       try recordingFileStore.deleteRecording(at: audio)
       userDefaults.removeObject(forKey: audio.lastPathComponent)
     } catch {

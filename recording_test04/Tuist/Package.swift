@@ -5,10 +5,9 @@ import PackageDescription
   import struct ProjectDescription.PackageSettings
 
   let packageSettings = PackageSettings(
-    // Customize the product types for specific package product
-    // Default is .staticFramework
-    // productTypes: ["Alamofire": .framework,]
-    productTypes: [:]
+    productTypes: [:],
+    // Xcode 27 rejects older deployment targets in Firebase's transitive dependencies.
+    baseSettings: .settings(base: ["IPHONEOS_DEPLOYMENT_TARGET": "18.0"])
   )
 #endif
 

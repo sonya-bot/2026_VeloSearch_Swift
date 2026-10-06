@@ -10,6 +10,7 @@ struct SceneRecordingsView: View {
 
   @StateObject private var viewModel: SceneRecordingsViewModel
   @State private var searchText = ""
+  @State private var recordingToDelete: URL?
 
   init(
     sceneURL: URL,
@@ -55,7 +56,7 @@ struct SceneRecordingsView: View {
             recordingFileStore: recordingFileStore,
             userDefaults: userDefaults,
             favoriteAudios: favoriteAudios,
-            onDelete: deleteAudio,
+            onDelete: { recordingToDelete = $0 },
             onFavorite: toggleFavorite,
             isFavorite: isFavorite
           )
@@ -65,6 +66,7 @@ struct SceneRecordingsView: View {
     .navigationTitle(sceneURL.lastPathComponent)
     .searchable(text: $searchText, prompt: "Search Recordings")
     .refreshable { viewModel.refresh() }
+    .recordingDeletionConfirmation(recording: $recordingToDelete, onDeleteConfirmed: deleteAudio)
     .alert(
       "エラー",
       isPresented: Binding(
@@ -132,11 +134,12 @@ struct RecordingRows: View {
         }
       }
       .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-        Button(role: .destructive) {
+        Button {
           onDelete(item)
         } label: {
-          Label("", systemImage: "trash")
+          Label("削除", systemImage: "trash")
         }
+        .tint(.red)
       }
       .swipeActions(edge: .leading, allowsFullSwipe: false) {
         Button {

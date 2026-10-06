@@ -117,9 +117,15 @@ Swiftファイルは原則として1行120文字以内に保ちます。
 
 ```text
 recording_test04/Resources/models/
-├── 20260725-010849_hybrid_Best_model_epoch59.mlpackage
-└── RC_CNN.mlpackage  # 実ファイルを用意した場合の追加例
+├── CNN_CNN.mlpackage
+├── CNN_RC.mlpackage
+├── RC_CNN.mlpackage
+└── RC_RC.mlpackage
 ```
+
+同梱元は`/Users/Souma/Develop/Python/noise_reduction/comparison_models/`の各モデル配下です。
+`.mlpackage`だけをコピーし、学習用`.pth`、training config、検証レポートはアプリへ同梱しません。
+4モデルの出典・チェックサムは[同梱モデル](models.md)を参照してください。
 
 1. `.mlpackage`を上記ディレクトリ直下へ配置します。ファイル名は一意にします。
 2. 学習側の前処理が44.1 kHz、ステレオ、約2秒、5特徴量の順序と一致することを確認します。
@@ -132,11 +138,14 @@ recording_test04/Resources/models/
 
 モデル一覧はBundle内の`.mlmodelc`から取得するため、Swiftのモデル型名を編集する必要はありません。
 表示・CSVのモデル名は末尾の拡張子を除いた名前です。`RC_CNN.v2.mlpackage`は`RC_CNN.v2`となります。
-改名は別モデル名として扱い、保存済みの選択名が見つからなければ現行モデルへ復帰して通知します。
-現在同梱しているのは現行モデル1種類です。追加モデルの実ファイルは別途用意してください。
+改名は別モデル名として扱い、保存済みの選択名が見つからなければCNN_CNNへ復帰して通知します。
+現在はCNN_CNN／CNN_RC／RC_CNN／RC_RCの4モデルを同梱しています。初期選択はCNN_CNNです。
+旧`20260725-010849_hybrid_Best_model_epoch59`とCNN_CNNはパッケージの全ファイルが一致するため、
+旧選択名をCNN_CNNへ移行します。移行先の読み込みが成功するまで保存済み選択は変更しません。
 
-Xcode 27で既存Firebase依存のiOS 12 deployment targetが拒否される場合、検証コマンドに
-`IPHONEOS_DEPLOYMENT_TARGET=18.0`を加えてください。依存の生成済みプロジェクトは直接編集しません。
+依存ターゲットの最低対応OSは`Tuist/Package.swift`の`baseSettings`でiOS 18.0へ揃えています。
+Xcode 27が拒否するFirebaseの間接依存のiOS 12設定も、プロジェクト生成時に置き換えます。
+設定を変更した場合は`./scripts/generate_project.sh`で再生成し、生成済みプロジェクトは直接編集しません。
 
 ## アプリアイコンの更新
 

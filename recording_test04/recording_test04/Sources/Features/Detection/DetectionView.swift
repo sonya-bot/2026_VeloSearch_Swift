@@ -146,7 +146,7 @@ struct DetectionView: View {
     }
     .foregroundStyle(detection.state.themeColor)
     .padding(.horizontal, 16)
-    .padding(.vertical, 8)
+    .padding(.vertical, 4)
     .background(detection.state.themeColor.opacity(0.12), in: Capsule())
     .frame(maxWidth: .infinity)
     .accessibilityElement(children: .combine)
@@ -156,6 +156,7 @@ struct DetectionView: View {
   private func detectionPanel(isLandscape: Bool) -> some View {
     VStack(spacing: 0) {
       statusView
+        .padding(.top, 8)
       Spacer(minLength: 0)
       RadarView(state: detection.state, aiAngle: detection.currentAIAngle)
         .aspectRatio(1, contentMode: .fit)
@@ -271,11 +272,19 @@ struct DetectionView: View {
       HStack {
         Text("Detection probability")
           .font(.headline)
-        Spacer()
+          .layoutPriority(1)
+        Text(detection.displayedModelName)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .truncationMode(.tail)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .accessibilityLabel("推論モデル: \(detection.displayedModelName)")
         Text(formatElapsedTime(detection.elapsedTime))
           .monospacedDigit()
+          .fixedSize()
         Text(currentDecibelText)
           .monospacedDigit()
+          .fixedSize()
       }
       .font(.caption)
 
