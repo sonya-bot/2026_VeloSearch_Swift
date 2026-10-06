@@ -12,11 +12,9 @@ struct CSVPreviewView_Previews: PreviewProvider {
 
 // MARK: - 2. プレビュー画面UI
 struct CSVPreviewView: View {
-  let csvURL: URL
   @State private var viewModel: CSVPreviewViewModel
 
   init(csvURL: URL, recordingFileStore: RecordingFileStoring) {
-    self.csvURL = csvURL
     _viewModel = State(
       initialValue: CSVPreviewViewModel(
         csvURL: csvURL,
@@ -27,12 +25,36 @@ struct CSVPreviewView: View {
 
   var body: some View {
     VStack(spacing: 0) {
+      if viewModel.canSwitchCSV {
+        Picker(
+          "CSVの種類",
+          selection: Binding(
+            get: { viewModel.selectedKind }, set: { viewModel.select($0) }
+          )
+        ) {
+          ForEach(MeasurementCSVKind.allCases) { kind in
+            Text(kind.rawValue).tag(kind)
+          }
+        }
+        .pickerStyle(.segmented)
+        .padding()
+      }
+      Text(viewModel.csvURL.lastPathComponent)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal)
+        .textSelection(.enabled)
       switch viewModel.loadState {
       case .idle, .loading:
         ProgressView("Loading CSV...")
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       case .loaded:
         csvTable
+      case .missing:
+        ContentUnavailableView(
+          "CSVファイルなし", systemImage: "doc",
+          description: Text("この録音に対応するCSVファイルはありません。")
+        )
       case .empty:
         ContentUnavailableView(
           "CSVデータなし",
@@ -48,7 +70,7 @@ struct CSVPreviewView: View {
       }
     }
     .padding(.bottom, 80)  // タブバーと被らないように余白を追加
-    .navigationTitle(csvURL.lastPathComponent)
+    .navigationTitle(viewModel.csvURL.lastPathComponent)
     .navigationBarTitleDisplayMode(.inline)
     .onAppear {
       viewModel.load()

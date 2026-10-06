@@ -9,7 +9,7 @@ final class AudioIOController: ObservableObject {
 
   private let selectionStore: AudioIOSelectionStore
   private let audioSession: AVAudioSession
-  private var configurationLockCount = 0
+  @Published private var configurationLockCount = 0
   private var routeChangeCancellable: AnyCancellable?
   private var routeChangeTask: Task<Void, Never>?
 
@@ -33,6 +33,8 @@ final class AudioIOController: ObservableObject {
       }
     }
   }
+
+  var isConfigurationLocked: Bool { configurationLockCount > 0 }
 
   var storedSelection: AudioIOSelection {
     selectionStore.selection

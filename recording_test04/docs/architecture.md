@@ -61,6 +61,7 @@ SwiftUIのアプリライフサイクルへ`UIApplicationDelegateAdaptor`で接�
 - `LocationService`
 - `AudioPreviewController`
 - `AnalyzeResultWriting`
+- `DirectionModelSelectionController`、`MeasurementClock`、`MeasurementEnvironment`
 
 本番では`AppDependencies.live`を使用し、テストでは専用の依存関係へ差し替えられます。
 
@@ -87,7 +88,9 @@ Monitoringsの反復回数、カウントダウン、ターム遷移は`Monitori
 - Service：録音、再生、解析、Core ML、位置情報などのOS・計算処理
 - Repository／Writer：ファイル名、Scene、CSV、JSON、WAV、ZIPの永続化
 
-DetectionのControllerは音声処理、方向推定、ログをextensionファイルへ分割しています。
+DetectionのControllerはMainActorでUI状態を管理し、特徴量生成と推論は専用の直列キューで実行します。
+各処理は計測ID・イベントIDと専用の特徴量抽出器を保持し、停止後の結果が別の計測へ混入しないようにします。
+音声処理、方向推定、ログをextensionファイルへ分割しています。
 Analyzeの計測、解析、結果出力、Playerの再生、付帯情報、CollectionsのScene内録音管理も
 それぞれ独立した型で扱います。
 
@@ -97,7 +100,9 @@ Analyzeの計測、解析、結果出力、Playerの再生、付帯情報、Coll
 
 - `AudioFeatureExtractor`：ステレオ音声からCore ML入力特徴量を生成します。
 - `BeepDetector`：Goertzel法を用いてビープ帯域を検出します。
-- `DirectionModelService`：Core MLモデルを読み込み、8方向の確率を返します。
+- `DirectionModelLoadingService`：同梱モデルを列挙し、専用キューで読み込みます。
+- `DirectionModelService`：入出力を検証し、8方向の確率とCore ML実行の時間境界を返します。
+- `MeasurementClock`：単調時計を抽象化します。
 - `AudioPreviewController`：設定画面で選択した警告音とテスト音源を共通の経路で試聴します。
 - `ESSAnalyzer`：録音信号とESSからIR、周波数応答を算出します。
 
@@ -109,13 +114,14 @@ Analyzeの計測、解析、結果出力、Playerの再生、付帯情報、Coll
 
 `RecordingFileStoring`がFeature層から見えるインターフェースです。
 `RecordingFileStore`がDocuments、Scene、録音、関連ファイルの改名・削除、CSV読み込みを管理し、
-`StoredZIPWriter`が共有用ZIPを生成します。Analyze固有のCSV、JSON、IR出力は
+`StoredZIPWriter`が共有用ZIPを生成します。`DirectionModelSelectionRepository`がモデル名の永続化、`CSVCodec`がCSVの引用符・改行処理を担当します。
+Analyze固有のCSV、JSON、IR出力は
 `AnalyzeResultWriting`を介して`AnalyzeResultWriter`が担当します。
 
 ## Shared層
 
 - `AppLogger`：OSLogのカテゴリを一元化します。
-- `CSVPreviewView`：Dev CSVと録音に対応する通常CSVを表形式で表示します。
+- `CSVPreviewView`：時系列・推論イベントCSVを切り替えて表示し、旧CSVの閲覧も維持します。
 - `CSVPreviewViewModel`：RepositoryからCSVを読み込み、表示用の行へ変換します。
 - `MeasurementLandscapeLayout`：各計測タブの横画面カラム位置を統一します。
 - `MeasurementControlButton`：計測開始・停止ボタンの外形と状態表現を統一します。

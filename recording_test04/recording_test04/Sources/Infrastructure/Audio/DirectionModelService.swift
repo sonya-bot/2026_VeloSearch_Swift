@@ -7,61 +7,118 @@ struct DirectionPrediction {
   let probabilities: [Float]
 }
 
-final class DirectionModelService {
-  static let modelName = "20260725-010849_hybrid_Best_model_epoch59"
+struct DirectionInferenceResult {
+  let prediction: DirectionPrediction?
+  let started: TimeInterval?
+  let completed: TimeInterval?
+  let failureKind: String
+}
 
-  private var model: _20260725_010849_hybrid_Best_model_epoch59?
-  let detectionThreshold: Float = 0.40
+protocol DirectionPredicting: AnyObject, Sendable {
+  func infer(features: MLMultiArray, clock: MeasurementClock) -> DirectionInferenceResult
+}
 
-  init() {
+enum DirectionModelError: LocalizedError {
+  case incompatibleInput
+  case incompatibleOutput
+  case invalidProbabilities
+
+  var errorDescription: String? {
+    switch self {
+    case .incompatibleInput: return "モデルの入力が対応する特徴量形式と一致しません。"
+    case .incompatibleOutput: return "モデルの出力が8方向の確率形式と一致しません。"
+    case .invalidProbabilities: return "モデルが有効な8方向の確率を返しませんでした。"
+    }
+  }
+}
+
+// Protect Core ML execution even if different recording controllers share this loaded model.
+final class DirectionModelService: DirectionPredicting, @unchecked Sendable {
+  private let inferenceLock = NSLock()
+  private let model: MLModel
+  private let inputName: String
+  private let outputName: String
+  private let inputDataType: MLMultiArrayDataType
+
+  init(url: URL) throws {
+    let configuration = MLModelConfiguration()
+    configuration.computeUnits = .all
+    model = try MLModel(contentsOf: url, configuration: configuration)
+    let inputs = model.modelDescription.inputDescriptionsByName
+    guard inputs.count == 1, let input = inputs.first,
+      let constraint = input.value.multiArrayConstraint,
+      constraint.shape.map(\.intValue) == [1, 5, 64, 173],
+      [.float16, .float32, .double].contains(constraint.dataType)
+    else { throw DirectionModelError.incompatibleInput }
+    let outputs = model.modelDescription.outputDescriptionsByName
+    guard outputs.count == 1, let output = outputs.first,
+      let outputConstraint = output.value.multiArrayConstraint,
+      outputConstraint.shape.reduce(1, { $0 * $1.intValue }) == 8
+    else { throw DirectionModelError.incompatibleOutput }
+    inputName = input.key
+    outputName = output.key
+    inputDataType = constraint.dataType
+  }
+
+  func infer(features: MLMultiArray, clock: MeasurementClock) -> DirectionInferenceResult {
+    inferenceLock.lock()
+    defer { inferenceLock.unlock() }
+    var started: TimeInterval?
+    var completed: TimeInterval?
     do {
-      let config = MLModelConfiguration()
-      config.computeUnits = .all
-      self.model = try _20260725_010849_hybrid_Best_model_epoch59(configuration: config)
+      let provider = try inputProvider(features: features)
+      started = clock.now()
+      let output: MLFeatureProvider
+      do {
+        output = try model.prediction(from: provider)
+        completed = clock.now()
+      } catch {
+        completed = clock.now()
+        throw error
+      }
+      let prediction = try directionPrediction(from: output)
+      return DirectionInferenceResult(
+        prediction: prediction, started: started, completed: completed, failureKind: ""
+      )
     } catch {
-      AppLogger.detection.error("Core MLモデルの読み込みに失敗しました: \(error.localizedDescription)")
+      AppLogger.detection.error("推論に失敗しました: \(error.localizedDescription)")
+      let failureKind: String
+      switch error {
+      case DirectionModelError.invalidProbabilities: failureKind = "invalid_probabilities"
+      case DirectionModelError.incompatibleInput: failureKind = "incompatible_input"
+      case DirectionModelError.incompatibleOutput: failureKind = "incompatible_output"
+      default: failureKind = "prediction_failed"
+      }
+      return DirectionInferenceResult(
+        prediction: nil, started: started, completed: completed, failureKind: failureKind
+      )
     }
   }
 
-  func predict(features: MLMultiArray) -> DirectionPrediction? {
-    guard let model = model else { return nil }
-
-    do {
-      let input = _20260725_010849_hybrid_Best_model_epoch59Input(audioFeatures: features)
-      let output = try model.prediction(input: input)
-
-      guard output.directionProbabilities.count == 8 else {
-        AppLogger.detection.error(
-          "推論出力数が不正です: \(output.directionProbabilities.count)"
-        )
-        return nil
-      }
-
-      let probabilities = (0..<8).map {
-        output.directionProbabilities[$0].floatValue
-      }
-      guard probabilities.allSatisfy({ $0.isFinite && $0 >= 0.0 }) else {
-        AppLogger.detection.error("推論確率に不正な値が含まれています")
-        return nil
-      }
-
-      guard
-        let maxIndex = probabilities.indices.max(
-          by: { probabilities[$0] < probabilities[$1] }
-        )
-      else {
-        return nil
-      }
-
-      return DirectionPrediction(
-        angle: maxIndex * 45,
-        maxProbability: probabilities[maxIndex],
-        probabilities: probabilities
-      )
-
-    } catch {
-      AppLogger.detection.error("推論に失敗しました: \(error.localizedDescription)")
-      return nil
+  private func inputProvider(features: MLMultiArray) throws -> MLFeatureProvider {
+    guard features.shape.map(\.intValue) == [1, 5, 64, 173] else {
+      throw DirectionModelError.incompatibleInput
     }
+    let inputFeatures: MLMultiArray
+    if features.dataType == inputDataType {
+      inputFeatures = features
+    } else {
+      inputFeatures = try MLMultiArray(shape: features.shape, dataType: inputDataType)
+      for index in 0..<features.count { inputFeatures[index] = features[index] }
+    }
+    return try MLDictionaryFeatureProvider(dictionary: [inputName: inputFeatures])
+  }
+
+  private func directionPrediction(from output: MLFeatureProvider) throws -> DirectionPrediction {
+    guard let probabilitiesArray = output.featureValue(for: outputName)?.multiArrayValue,
+      probabilitiesArray.count == 8
+    else { throw DirectionModelError.incompatibleOutput }
+    let probabilities = (0..<8).map { probabilitiesArray[$0].floatValue }
+    guard probabilities.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }),
+      let maxIndex = probabilities.indices.max(by: { probabilities[$0] < probabilities[$1] })
+    else { throw DirectionModelError.invalidProbabilities }
+    return DirectionPrediction(
+      angle: maxIndex * 45, maxProbability: probabilities[maxIndex], probabilities: probabilities
+    )
   }
 }

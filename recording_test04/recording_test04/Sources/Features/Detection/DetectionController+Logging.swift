@@ -1,162 +1,72 @@
 import Foundation
 
 extension DetectionController {
-  func appendLocalizationEvent(
-    eventID: Int?,
-    groundTruth: String,
-    predictedAngle: Int?,
-    maxProbability: Float?,
-    probabilities: [Float]?,
-    accepted: Bool,
-    beepDetectedTime: TimeInterval,
-    predictionCompletedTime: TimeInterval,
-    beepToPredictionMs: TimeInterval,
-    warningTriggered: Bool,
-    predictionSuccess: Bool
-  ) {
-    let probabilityFields: [String]
-    if let probabilities, probabilities.count == 8 {
-      probabilityFields = probabilities.map { String(format: "%.6f", $0) }
-    } else {
-      probabilityFields = Array(repeating: "", count: 8)
-    }
-
+  func appendLocalizationEvent(_ event: LocalizationEvent) {
+    let prediction = event.prediction
+    let probabilities =
+      prediction?.probabilities.map { CSVCodec.decimal(Double($0), precision: 6) }
+      ?? Array(repeating: "", count: 8)
+    let completedTime =
+      event.timing.predictionCompleted.map { CSVCodec.decimal($0 - event.origin) } ?? ""
+    let updatedTime =
+      (event.timing.uiUpdated ?? event.cancelledAt).map {
+        CSVCodec.decimal($0 - event.origin)
+      } ?? ""
     let fields =
       [
-        eventID.map(String.init) ?? "",
-        DirectionModelService.modelName,
-        String(format: "%.2f", predictionCompletedTime),
-        groundTruth,
-        currentDirectionTag,
-        predictedAngle.map(String.init) ?? "",
-        maxProbability.map { String(format: "%.6f", $0) } ?? "",
-        accepted.description,
-      ] + probabilityFields + [
-        String(format: "%.2f", beepDetectedTime),
-        String(format: "%.2f", predictionCompletedTime),
-        String(format: "%.1f", beepToPredictionMs),
-        warningTriggered.description,
-        predictionSuccess.description,
+        String(event.eventID), event.modelName, updatedTime, event.groundTruth, event.directionTag,
+        prediction.map { String($0.angle) } ?? "",
+        prediction.map { CSVCodec.decimal(Double($0.maxProbability), precision: 6) } ?? "",
+        (prediction.map { $0.maxProbability >= modelSelection.detectionThreshold } ?? false)
+          .description,
+      ] + probabilities + [
+        CSVCodec.decimal(event.timing.beepDetected - event.origin), completedTime,
+        event.timing.durationFields[4], event.warningTriggered.description,
+        (prediction != nil).description,
+      ] + event.timing.durationFields + event.timing.boundaryFields(relativeTo: event.origin) + [
+        environment.deviceModel, environment.osVersion, environment.appVersion,
+        environment.buildNumber,
+        CSVCodec.decimal(Double(modelSelection.detectionThreshold)), "2", event.outcome,
+        event.failureKind,
       ]
-
-    eventcsvData.append(fields.map(csvEscaped).joined(separator: ","))
+    eventcsvData.append(CSVCodec.row(fields))
   }
 
   func recordCSVLog(locationManager: LocationService) {
-
-    let speed = locationManager.speed * 3.6
-    let angle = currentAIAngle.map(String.init) ?? ""
-    let probability =
-      currentAIAngle == nil
-      ? ""
-      : String(format: "%.1f", currentAIProbability)
-
-    let logLine = String(
-      format: "%.2f,%.1f,%.1f,%@,%@,%@,%@,%@,%@,%@,%d,%@,%@,%@",
-      elapsedTime,
-      speed,
-      currentDecibel,
-      state.title,
-      angle,
-      probability,
-      currentGroundTruth,
-      currentDirectionTag,
-      currentOrientation,
-      currentMicSource,
-      debugBufferCount,
-      debugFeatureCreated.description,
-      debugPredictExecuted.description,
-      debugPredictSuccess.description
-    )
-
-    speedcsvData.append(logLine)
-  }
-
-  func recordDevCSVLog(locationManager: LocationService) {
-    let speed = locationManager.speed * 3.6
-    let angle = currentAIAngle.map(String.init) ?? ""
-    let probability =
-      currentAIAngle == nil
-      ? ""
-      : String(format: "%.1f", currentAIProbability)
-
-    let logLine = String(
-      format: "%.2f,%.1f,%.1f,%@,%@,%@,%@,%@,%@,%@,%.1f,%d,%d,%d,%@,%.2f,%.1f,%@,%d,%@,%@,%@,%@",
-      elapsedTime,
-      speed,
-      currentDecibel,
-      state.title,
-      angle,
-      probability,
-      currentGroundTruth,
-      currentDirectionTag,
-      currentOrientation,
-      currentMicSource,
-      debugLastUpdateMs,
-      debugFeatureSkipCount,
-      debugPredictionSkipCount,
-      debugBeepDetectedCount,
-      debugBeepDetectedThisFrame.description,
-      debugLastBeepElapsedTime,
-      debugBeepToPredictionMs,
-      debugLocalizationState,
-      debugBufferCount,
-      debugFeatureCreated.description,
-      debugPredictExecuted.description,
-      debugPredictSuccess.description,
-      csvEscaped(debugMessage)
-    )
-
-    devcsvData.append(logLine)
-    // 0.1秒ごとのCSV行でビープ発生タイミングを1回だけ示す。
+    let fields = [
+      CSVCodec.decimal(clock.now() - sessionOrigin),
+      CSVCodec.decimal(locationManager.speed * 3.6, precision: 1),
+      CSVCodec.decimal(Double(currentDecibel), precision: 1), state.title,
+      currentAIAngle.map(String.init) ?? "",
+      currentAIAngle == nil ? "" : CSVCodec.decimal(Double(currentAIProbability), precision: 1),
+      currentGroundTruth, currentDirectionTag, currentOrientation, currentMicSource,
+      CSVCodec.decimal(debugLastUpdateMs), String(debugFeatureSkipCount),
+      String(debugPredictionSkipCount),
+      String(debugBeepDetectedCount), debugBeepDetectedThisFrame.description,
+      CSVCodec.decimal(debugLastBeepElapsedTime), CSVCodec.decimal(debugBeepToPredictionMs),
+      debugLocalizationState, String(debugBufferCount), debugFeatureCreated.description,
+      debugPredictExecuted.description, debugPredictSuccess.description, debugMessage,
+    ]
+    speedcsvData.append(CSVCodec.row(fields))
     debugBeepDetectedThisFrame = false
   }
 
   func savespeedCSV() {
-    guard let currentRecordingDirectory else { return }
-    let path = currentRecordingDirectory.appendingPathComponent("\(currentBaseFileName).csv")
-    do {
-      try speedcsvData.joined(separator: "\n").write(
-        to: path,
-        atomically: true,
-        encoding: .utf8
-      )
-    } catch {
-      AppLogger.storage.error("計測CSVの保存に失敗しました: \(error.localizedDescription)")
-    }
-  }
-
-  func saveDevCSV() {
-    guard let currentRecordingDirectory else { return }
-    let path = currentRecordingDirectory.appendingPathComponent("Dev_\(currentBaseFileName).csv")
-    do {
-      try devcsvData.joined(separator: "\n").write(
-        to: path,
-        atomically: true,
-        encoding: .utf8
-      )
-    } catch {
-      AppLogger.storage.error("Dev CSVの保存に失敗しました: \(error.localizedDescription)")
-    }
+    saveCSVRows(speedcsvData, prefix: "")
   }
 
   func saveEventCSV() {
-    guard let currentRecordingDirectory else { return }
-    let path = currentRecordingDirectory.appendingPathComponent(
-      "Localization_\(currentBaseFileName).csv")
-    do {
-      try eventcsvData.joined(separator: "\n").write(
-        to: path,
-        atomically: true,
-        encoding: .utf8
-      )
-    } catch {
-      AppLogger.storage.error("Localization CSVの保存に失敗しました: \(error.localizedDescription)")
-    }
+    saveCSVRows(eventcsvData, prefix: "Localization_")
   }
 
-  func csvEscaped(_ value: String) -> String {
-    let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
-    return "\"\(escaped)\""
+  private func saveCSVRows(_ rows: [String], prefix: String) {
+    guard let currentRecordingDirectory else { return }
+    let url = currentRecordingDirectory.appendingPathComponent(
+      "\(prefix)\(currentBaseFileName).csv")
+    do {
+      try recordingFileStore.writeCSV(rows.joined(separator: "\n"), to: url)
+    } catch {
+      AppLogger.storage.error("計測CSVの保存に失敗しました: \(error.localizedDescription)")
+    }
   }
 }

@@ -20,7 +20,10 @@ struct AppRootView: View {
         DetectionView(
           recordingFileStore: dependencies.recordingFileStore,
           audioIOController: dependencies.audioIOController,
-          locationService: dependencies.locationService
+          locationService: dependencies.locationService,
+          modelSelection: dependencies.directionModelSelection,
+          clock: dependencies.measurementClock,
+          environment: dependencies.measurementEnvironment
         )
       }
 
@@ -52,13 +55,16 @@ struct AppRootView: View {
         SettingsView(
           recordingFileStore: dependencies.recordingFileStore,
           audioIOController: dependencies.audioIOController,
-          audioPreviewController: dependencies.audioPreviewController
+          audioPreviewController: dependencies.audioPreviewController,
+          modelSelection: dependencies.directionModelSelection,
+          versionLabel: dependencies.measurementEnvironment.versionLabel
         )
       }
 
     }
     .tabViewStyle(.sidebarAdaptable)
     .task {
+      await dependencies.directionModelSelection.prepareSelection()
       await dependencies.audioIOController.applyStoredSelection()
     }
   }

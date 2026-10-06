@@ -46,7 +46,7 @@ struct DeveloperSettingsView: View {
       } header: {
         Text("Debug CSV")
       } footer: {
-        Text("Detect画面で保存されたDev_から始まるCSVのみを表示します。")
+        Text("検知の時系列CSVと旧Dev CSVを表示します。プレビュー内で推論イベントCSVへ切り替えられます。")
       }
     }
     .navigationTitle("Developer")

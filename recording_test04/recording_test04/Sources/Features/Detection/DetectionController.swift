@@ -34,25 +34,18 @@ enum DetectionState {
 
 enum LocalizationState: String {
   case listeningForBeep
-  case waitingAfterBeep
   case collectingAudio
   case predicting
 }
 
 enum DetectionCSVHeader {
   static let measurement = [
-    "elapsed_time", "speed_kmh", "volume_db", "status", "ai_angle",
-    "ai_probability", "ground_truth_angle", "direction_tag", "device_orientation", "mic_source",
-    "buffer_count", "feature_created", "predict_executed", "predict_success",
-  ].joined(separator: ",")
-
-  static let development = [
-    "elapsed_time", "speed_kmh", "volume_db", "status", "ai_angle",
-    "ai_probability", "ground_truth_angle", "direction_tag", "device_orientation", "mic_source",
-    "update_ms", "feature_skip_count", "prediction_skip_count", "beep_detected_count",
-    "beep_detected_this_frame", "last_beep_elapsed_time", "beep_to_prediction_ms",
-    "localization_state", "buffer_count", "feature_created", "predict_executed",
-    "predict_success", "debug_message",
+    "elapsed_time", "speed_kmh", "volume_db", "status", "ai_angle", "ai_probability",
+    "ground_truth_angle", "direction_tag", "device_orientation", "mic_source", "update_ms",
+    "feature_skip_count", "prediction_skip_count", "beep_detected_count",
+    "beep_detected_this_frame",
+    "last_beep_elapsed_time", "beep_to_prediction_ms", "localization_state", "buffer_count",
+    "feature_created", "predict_executed", "predict_success", "debug_message",
   ].joined(separator: ",")
 
   static let localization = [
@@ -61,11 +54,17 @@ enum DetectionCSVHeader {
     "max_probability", "accepted", "prob_000", "prob_045", "prob_090", "prob_135",
     "prob_180", "prob_225", "prob_270", "prob_315", "beep_detected_time",
     "prediction_completed_time", "beep_to_prediction_ms", "warning_triggered",
-    "prediction_success",
+    "prediction_success", "audio_collection_ms", "feature_extraction_ms", "inference_ms",
+    "ui_update_ms", "total_ms", "audio_ready_time", "feature_started_time",
+    "feature_completed_time",
+    "prediction_started_time", "inference_completed_time", "ui_updated_time", "device_model",
+    "os_version", "app_version", "build_number", "detection_threshold", "csv_schema_version",
+    "outcome", "failure_kind",
   ].joined(separator: ",")
 }
 
 // MARK: - 1. Detecting (検知ロジック)
+@MainActor
 @Observable
 final class DetectionController {
   let recordingFileStore: RecordingFileStoring
@@ -82,8 +81,16 @@ final class DetectionController {
     interleaved: false
   )!
 
-  let featureExtractor = AudioFeatureExtractor()
-  let mlManager = DirectionModelService()
+  var featureExtractor = AudioFeatureExtractor()
+  let modelSelection: DirectionModelSelectionController
+  let clock: MeasurementClock
+  let environment: MeasurementEnvironment
+  var activeSessionID: UUID?
+  var sessionOrigin: TimeInterval = 0
+  var activeEvent: LocalizationEvent?
+  var sessionPredictor: DirectionPredicting?
+  var sessionModelName = ""
+  var modelErrorMessage: String?
   let beepDetector = BeepDetector()
   let featureExtractionQueue = DispatchQueue(
     label: "dev.tuist.recording-test04.feature-extraction",
@@ -92,6 +99,7 @@ final class DetectionController {
 
   var isRecording = false
   private var isAudioConfigurationLocked = false
+  private var hasInstalledAudioTap = false
   var isTestSoundPlaying = false
   var state: DetectionState = .standby
   var elapsedTime: TimeInterval = 0.0
@@ -120,29 +128,19 @@ final class DetectionController {
   var debugBeepToPredictionMs: Double = 0.0
 
   var timer: Timer?
-  var startTime: Date?
+  var sessionLocationService: LocationService?
   var speedcsvTimer: Timer?
   var speedcsvData: [String] = []
-  var devcsvData: [String] = []
   var eventcsvData: [String] = []
   var currentBaseFileName: String = ""
   var currentRecordingDirectory: URL?
   var currentOrientation: String = "横"
   var currentMicSource: String = "背面"
-  let featureExtractionLock = NSLock()
-  var isExtractingFeatures = false
-  let predictionLock = NSLock()
-  var isPredicting = false
-  var lastPredictionSuccessTime: Date?
-  // ビープ音そのものを定位対象にするため、検知後の待機は入れない。
-  let localizationDelaySeconds: TimeInterval = 0.0
+  var lastPredictionSuccessTime: TimeInterval?
   let preRollSamples: Int = 22050
   var preRollL: [Float] = []
   var preRollR: [Float] = []
   var localizationState: LocalizationState = .listeningForBeep
-  var beepDetectedAt: Date?
-  var pendingEventID: Int?
-  var pendingGroundTruth: String = "FalseDetect"
   var nextEventID: Int = 1
   var resultClearTask: Task<Void, Never>?
   private var routeInvalidationCancellable: AnyCancellable?
@@ -151,10 +149,16 @@ final class DetectionController {
 
   init(
     recordingFileStore: RecordingFileStoring,
-    audioIOController: AudioIOController
+    audioIOController: AudioIOController,
+    modelSelection: DirectionModelSelectionController,
+    clock: MeasurementClock,
+    environment: MeasurementEnvironment
   ) {
     self.recordingFileStore = recordingFileStore
     self.audioIOController = audioIOController
+    self.modelSelection = modelSelection
+    self.clock = clock
+    self.environment = environment
     routeInvalidationCancellable = NotificationCenter.default.publisher(
       for: .audioIORouteBecameInvalid
     )
@@ -172,6 +176,16 @@ final class DetectionController {
     micSource: String,
     directionTag: MeasurementDirectionTag
   ) {
+    guard !isRecording, modelSelection.beginMeasurement(),
+      let predictor = modelSelection.predictor, let modelName = modelSelection.selectedModelName
+    else {
+      modelErrorMessage = "推論モデルが利用できません。Settingsで確認してください。"
+      return
+    }
+    modelErrorMessage = nil
+    sessionLocationService = locationManager
+    sessionPredictor = predictor
+    sessionModelName = modelName
     self.currentOrientation = orientation
     self.currentMicSource = micSource
     self.currentDirectionTag = directionTag.rawValue
@@ -192,43 +206,15 @@ final class DetectionController {
       let inputFormat = inputNode.inputFormat(forBus: 0)
       guard let audioConverter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
         AppLogger.audio.error("Audio Converterの作成に失敗しました")
+        modelSelection.endMeasurement()
         return
       }
 
       audioFile = try AVAudioFile(forWriting: audioFilename, settings: targetFormat.settings)
 
-      inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) {
-        [weak self] (buffer, time) in
-        guard let self = self else { return }
-        guard
-          let convertedBuffer = self.convertBuffer(
-            buffer,
-            converter: audioConverter,
-            targetFormat: self.targetFormat
-          )
-        else {
-          return
-        }
-
-        do {
-          try self.audioFile?.write(from: convertedBuffer)
-        } catch {
-          AppLogger.storage.error("検知音声の書き込みに失敗しました: \(error.localizedDescription)")
-        }
-
-        self.calculateDecibel(buffer: convertedBuffer)
-        self.handleLocalizationAudio(buffer: convertedBuffer, at: Date())
-      }
-
-      audioEngine.prepare()
-      try audioEngine.start()
-
-      lockAudioConfiguration()
-      isRecording = true
-      state = .safe
-      elapsedTime = 0.0
-      startTime = Date()
-      featureExtractor.reset()
+      let sessionID = UUID()
+      activeSessionID = sessionID
+      featureExtractor = AudioFeatureExtractor()
       beepDetector.reset()
       resetPreRollBuffer()
       setLocalizationState(.listeningForBeep)
@@ -236,37 +222,92 @@ final class DetectionController {
       resultClearTask?.cancel()
       resultClearTask = nil
       currentAIAngle = nil
-      currentAIProbability = 0.0
-      currentDirectionProbabilities = Array(repeating: 0.0, count: 8)
-      pendingEventID = nil
-      pendingGroundTruth = "FalseDetect"
+      currentAIProbability = 0
+      currentDirectionProbabilities = Array(repeating: 0, count: 8)
+      activeEvent = nil
       nextEventID = 1
       isWarningArmed = true
-
       speedcsvData = [DetectionCSVHeader.measurement]
-      devcsvData = [DetectionCSVHeader.development]
       eventcsvData = [DetectionCSVHeader.localization]
+      let recordingAudioFile = audioFile
+      let recordingFormat = targetFormat
+      inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) {
+        [weak self] buffer, _ in
+        guard
+          let convertedBuffer = Self.convertBuffer(
+            buffer, converter: audioConverter, targetFormat: recordingFormat
+          )
+        else { return }
+        do {
+          try recordingAudioFile?.write(from: convertedBuffer)
+        } catch {
+          AppLogger.storage.error("検知音声の書き込みに失敗しました: \(error.localizedDescription)")
+        }
+        let bufferTime = Date()
+        Task { @MainActor [weak self] in
+          guard let self, self.activeSessionID == sessionID, self.isRecording else { return }
+          self.calculateDecibel(buffer: convertedBuffer)
+          self.handleLocalizationAudio(buffer: convertedBuffer, at: bufferTime)
+        }
+      }
+      hasInstalledAudioTap = true
+      audioEngine.prepare()
+      sessionOrigin = clock.now()
+      try audioEngine.start()
+      lockAudioConfiguration()
+      isRecording = true
+      state = .safe
+      elapsedTime = 0
 
       timer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] _ in
-        guard let self = self, let startTime = self.startTime else { return }
-        self.elapsedTime = Date().timeIntervalSince(startTime)
+        // These timers are registered on the main run loop by this MainActor method.
+        MainActor.assumeIsolated {
+          guard let self, self.activeSessionID == sessionID else { return }
+          self.elapsedTime = self.clock.now() - self.sessionOrigin
+        }
       }
       speedcsvTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-        self?.recordCSVLog(locationManager: locationManager)
-        self?.recordDevCSVLog(locationManager: locationManager)
+        MainActor.assumeIsolated {
+          guard let self, self.activeSessionID == sessionID,
+            let locationService = self.sessionLocationService
+          else { return }
+          self.recordCSVLog(locationManager: locationService)
+        }
       }
 
     } catch {
+      activeSessionID = nil
+      sessionPredictor = nil
+      sessionLocationService = nil
+      if hasInstalledAudioTap {
+        audioEngine.inputNode.removeTap(onBus: 0)
+        hasInstalledAudioTap = false
+      }
+      audioFile = nil
+      modelSelection.endMeasurement()
       AppLogger.audio.error("検知録音の開始に失敗しました: \(error.localizedDescription)")
     }
   }
 
   @MainActor
   func stopDetecting() {
+    guard isRecording else { return }
+    if var event = activeEvent {
+      event.cancelledAt = clock.now()
+      event.outcome = "cancelled"
+      event.failureKind = "measurement_stopped"
+      appendLocalizationEvent(event)
+    }
+    activeEvent = nil
+    activeSessionID = nil
+    sessionPredictor = nil
+    sessionLocationService = nil
     audioEngine.stop()
     audioEngine.inputNode.removeTap(onBus: 0)
+    hasInstalledAudioTap = false
     audioFile = nil
     isRecording = false
+    modelSelection.endMeasurement()
     unlockAudioConfiguration()
     state = .standby
 
@@ -286,13 +327,9 @@ final class DetectionController {
       currentRecordingDirectory = recordingFileStore.defaultDirectory
     }
     savespeedCSV()
-    saveDevCSV()
     saveEventCSV()
-    featureExtractor.reset()
     beepDetector.reset()
     resetPreRollBuffer()
-    beepDetectedAt = nil
-    pendingEventID = nil
     setLocalizationState(.listeningForBeep)
     resetDetectionDisplay()
   }

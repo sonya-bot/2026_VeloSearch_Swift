@@ -17,7 +17,8 @@ protocol RecordingFileStoring: AnyObject {
   @discardableResult func renameRecording(at audioURL: URL, to rawBaseName: String) throws -> URL
   func shareableFiles(in sceneURL: URL, type: SceneShareType) -> [URL]
   func createShareArchive(sceneURL: URL, type: SceneShareType) throws -> URL
-  func allDevCSVFiles() -> [URL]
+  func diagnosticCSVFiles() -> [URL]
+  func writeCSV(_ contents: String, to url: URL) throws
   func csvContents(at url: URL) throws -> String
   func fileExists(at url: URL) -> Bool
   func directoryExists(at url: URL) -> Bool
@@ -34,6 +35,7 @@ enum RecordingFileStoreError: LocalizedError {
   case reservedSceneName
   case duplicateSceneName
   case missingScene
+  case duplicateRecordingName
   case noShareableFiles
   case archiveTooLarge
 
@@ -48,6 +50,8 @@ enum RecordingFileStoreError: LocalizedError {
       return "DefaultはScene名として使用できません。"
     case .duplicateSceneName:
       return "同じ名前のSceneが既に存在します。"
+    case .duplicateRecordingName:
+      return "同じ名前の録音または関連ファイルが既に存在します。"
     case .missingScene:
       return "Sceneが見つかりません。"
     case .noShareableFiles:

@@ -75,11 +75,12 @@ WAVを削除すると、存在する場合は次も同時に削除します。
 <basename>.csv
 <basename>.json
 Dev_<basename>.csv
+Localization_<basename>.csv
 <basename>_IR_CH1.wav
 <basename>_IR_CH2.wav
 ```
 
-現在の互換仕様では`Localization_<basename>.csv`は連動削除の対象外です。
+推論イベントCSVと旧Dev CSVも録音と一組として削除します。
 
 ## ZIP共有
 
@@ -106,11 +107,11 @@ ZIPは外部ライブラリを使わず、無圧縮Stored形式で一時ディ�
 - WAV単体共有
 - 録音削除
 - ファイル名とメタデータ編集
-- 同じbasenameを持つ通常CSVの表示
+- 同じbasenameを持つ時系列CSV・推論イベントCSVの表示
 
 縦画面では編集フォームをbottom sheetで表示し、横画面では画面右側へ常時表示します。再生画面下部の
 `CSVデータ`から対応CSVを表形式で開けます。対応CSVがない場合は`CSVデータなし`と表示し、遷移は
-行いません。Dev CSVやLocalization CSVはこの導線の対象外です。
+行いません。既存の導線を維持し、プレビュー画面内で時系列／推論イベントを切り替えます。時系列がなくイベントCSVだけある場合も開けます。
 
 ## Playerのメタデータ
 
@@ -132,9 +133,10 @@ Playerでbasenameを変更すると、次のファイルも存在する場合は
 
 - WAV
 - 通常CSV
-- Dev CSV
+- 旧Dev CSV
+- Localization CSV
 
-現在の互換仕様ではLocalization CSVは連動変更の対象外です。変更前ファイル名のメタデータは
+関連CSVは一緒に改名し、移動先に同名ファイルがある場合は改名を開始しません。変更前ファイル名のメタデータは
 削除し、変更後ファイル名へ保存し直します。名称変更後はPlayerのCSV導線も変更後の通常CSVを参照します。
 
 ## 速度表示
@@ -144,6 +146,10 @@ WAVと同じbasenameの通常CSVが存在する場合、Playerは`elapsed_time`�
 
 ## CSVプレビュー
 
-Playerの対応CSVとSettingsのDev CSVは共通のプレビュー画面を使用します。列数に応じて横方向、
-行数に応じて縦方向へスクロールできます。空ファイルと読み込み失敗は個別の状態として表示し、
+Playerの対応CSVとSettingsの診断CSVは共通のプレビュー画面を使用します。列数に応じて横方向、
+行数に応じて縦方向へスクロールできます。ファイルなし、空ファイル（ヘッダーのみを含む）、読み込み失敗は個別の状態として表示し、
 読み込み中の表示を継続しません。
+
+新規Detectingでは時系列と推論イベントの2種類だけを保存します。旧CSVは変換しません。
+引用符・カンマ・改行を含むCSVを共通のCodecで読み書きし、Playerの速度読み込みは列名で識別します。
+「CSV」共有は時系列とLocalization CSV、「Dev CSV」共有は旧Dev CSVを対象とします。

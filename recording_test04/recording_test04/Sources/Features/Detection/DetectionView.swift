@@ -7,7 +7,10 @@ struct DetectionView_Previews: PreviewProvider {
     DetectionView(
       recordingFileStore: RecordingFileStore.shared,
       audioIOController: AudioIOController(),
-      locationService: LocationService()
+      locationService: LocationService(),
+      modelSelection: AppDependencies.live.directionModelSelection,
+      clock: AppDependencies.live.measurementClock,
+      environment: AppDependencies.live.measurementEnvironment
     )
   }
 }
@@ -15,6 +18,7 @@ struct DetectionView_Previews: PreviewProvider {
 // MARK: -2 DetentingsView(画面UI)
 struct DetectionView: View {
   @State private var detection: DetectionController
+  @Bindable private var modelSelection: DirectionModelSelectionController
   private let recordingFileStore: RecordingFileStoring
   @ObservedObject private var audioIOController: AudioIOController
   @State private var locationManager: LocationService
@@ -31,15 +35,22 @@ struct DetectionView: View {
   init(
     recordingFileStore: RecordingFileStoring,
     audioIOController: AudioIOController,
-    locationService: LocationService
+    locationService: LocationService,
+    modelSelection: DirectionModelSelectionController,
+    clock: MeasurementClock,
+    environment: MeasurementEnvironment
   ) {
     self.recordingFileStore = recordingFileStore
+    self.modelSelection = modelSelection
     self.audioIOController = audioIOController
     _locationManager = State(initialValue: locationService)
     _detection = State(
       initialValue: DetectionController(
         recordingFileStore: recordingFileStore,
-        audioIOController: audioIOController
+        audioIOController: audioIOController,
+        modelSelection: modelSelection,
+        clock: clock,
+        environment: environment
       )
     )
   }
@@ -93,6 +104,25 @@ struct DetectionView: View {
         }
       }
       .onDisappear { detection.stopTestSound() }
+      .alert(
+        "推論モデル",
+        isPresented: Binding(
+          get: { modelSelection.message != nil || detection.modelErrorMessage != nil },
+          set: {
+            if !$0 {
+              modelSelection.message = nil
+              detection.modelErrorMessage = nil
+            }
+          }
+        )
+      ) {
+        Button("OK") {
+          modelSelection.message = nil
+          detection.modelErrorMessage = nil
+        }
+      } message: {
+        Text(modelSelection.message ?? detection.modelErrorMessage ?? "")
+      }
     }
   }
 
@@ -200,7 +230,7 @@ struct DetectionView: View {
       activeTitle: "Stop",
       isActive: detection.isRecording,
       tint: .red,
-      isDisabled: false
+      isDisabled: !detection.isRecording && !modelSelection.canStartMeasurement
     ) {
       withAnimation(.spring()) {
         if detection.isRecording {

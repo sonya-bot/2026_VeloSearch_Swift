@@ -14,7 +14,7 @@ final class DeveloperSettingsViewModel {
   func loadDevCSVFiles() {
     do {
       try recordingFileStore.prepareStorage()
-      devCSVFiles = recordingFileStore.allDevCSVFiles()
+      devCSVFiles = recordingFileStore.diagnosticCSVFiles()
     } catch {
       devCSVFiles = []
       AppLogger.storage.error("Dev CSV一覧の取得に失敗しました: \(error.localizedDescription)")

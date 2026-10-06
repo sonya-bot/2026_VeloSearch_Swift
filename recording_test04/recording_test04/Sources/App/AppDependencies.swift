@@ -10,6 +10,10 @@ struct AppDependencies {
   let audioPreviewController: AudioPreviewController
   let analyzeResultWriter: AnalyzeResultWriting
 
+  let directionModelSelection: DirectionModelSelectionController
+  let measurementClock: MeasurementClock
+  let measurementEnvironment: MeasurementEnvironment
+
   static let live = AppDependencies(
     recordingFileStore: RecordingFileStore.shared,
     userDefaults: .standard,
@@ -17,6 +21,12 @@ struct AppDependencies {
     audioIOController: AudioIOController(),
     locationService: LocationService(),
     audioPreviewController: AudioPreviewController(),
-    analyzeResultWriter: AnalyzeResultWriter()
+    analyzeResultWriter: AnalyzeResultWriter(),
+    directionModelSelection: DirectionModelSelectionController(
+      loader: DirectionModelLoadingService(bundle: .main),
+      repository: DirectionModelSelectionRepository(userDefaults: .standard)
+    ),
+    measurementClock: SystemMeasurementClock(),
+    measurementEnvironment: MeasurementEnvironment.current(bundle: .main)
   )
 }

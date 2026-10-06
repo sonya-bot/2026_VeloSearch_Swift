@@ -174,7 +174,8 @@ final class RecordingFileStore: RecordingFileStoring {
     )
     let relatedURLs = files.filter { url in
       let stem = url.deletingPathExtension().lastPathComponent
-      return stem == baseName || stem == "Dev_\(baseName)" || stem.hasPrefix("\(baseName)_IR_CH")
+      return stem == baseName || stem == "Dev_\(baseName)" || stem == "Localization_\(baseName)"
+        || stem.hasPrefix("\(baseName)_IR_CH")
     }
 
     for url in relatedURLs where fileManager.fileExists(atPath: url.path) {
@@ -191,16 +192,31 @@ final class RecordingFileStore: RecordingFileStoring {
     let directory = audioURL.deletingLastPathComponent()
     let renamedAudioURL = directory.appendingPathComponent(baseName).appendingPathExtension(
       audioURL.pathExtension)
-    try fileManager.moveItem(at: audioURL, to: renamedAudioURL)
-
     let relatedNames = [
       ("\(oldBaseName).csv", "\(baseName).csv"),
       ("Dev_\(oldBaseName).csv", "Dev_\(baseName).csv"),
+      ("Localization_\(oldBaseName).csv", "Localization_\(baseName).csv"),
     ]
-    for (oldName, newName) in relatedNames {
-      let sourceURL = directory.appendingPathComponent(oldName)
-      guard fileManager.fileExists(atPath: sourceURL.path) else { continue }
-      try fileManager.moveItem(at: sourceURL, to: directory.appendingPathComponent(newName))
+    let companions = relatedNames.map { oldName, newName in
+      (directory.appendingPathComponent(oldName), directory.appendingPathComponent(newName))
+    }.filter { fileExists(at: $0.0) }
+    let moves = [(audioURL, renamedAudioURL)] + companions
+    guard !moves.contains(where: { fileManager.fileExists(atPath: $0.1.path) }) else {
+      throw RecordingFileStoreError.duplicateRecordingName
+    }
+    var completedMoves: [(URL, URL)] = []
+    do {
+      for (source, destination) in moves {
+        try fileManager.moveItem(at: source, to: destination)
+        completedMoves.append((source, destination))
+      }
+    } catch {
+      for (source, destination) in completedMoves.reversed() {
+        do { try fileManager.moveItem(at: destination, to: source) } catch {
+          AppLogger.storage.error("録音名変更の復旧に失敗しました: \(error.localizedDescription)")
+        }
+      }
+      throw error
     }
     return renamedAudioURL
   }
@@ -243,7 +259,7 @@ final class RecordingFileStore: RecordingFileStoring {
     return archiveURL
   }
 
-  func allDevCSVFiles() -> [URL] {
+  func diagnosticCSVFiles() -> [URL] {
     let directories = [defaultDirectory] + sceneDirectories()
     return directories.flatMap { directory in
       ((try? fileManager.contentsOfDirectory(
@@ -251,7 +267,22 @@ final class RecordingFileStore: RecordingFileStoring {
         includingPropertiesForKeys: [.contentModificationDateKey],
         options: [.skipsHiddenFiles]
       )) ?? []).filter {
-        $0.pathExtension.lowercased() == "csv" && $0.lastPathComponent.hasPrefix("Dev_")
+        guard $0.pathExtension.lowercased() == "csv" else { return false }
+        let name = $0.lastPathComponent
+        if name.hasPrefix("Dev_") { return true }
+        if name.hasPrefix("Localization_") {
+          let baseName = String(name.dropFirst("Localization_".count))
+          return !fileExists(at: directory.appendingPathComponent(baseName))
+            && !fileExists(at: directory.appendingPathComponent("Dev_\(baseName)"))
+        }
+        let companion = directory.appendingPathComponent("Localization_\(name)")
+        if name.hasPrefix("Detecting_") || fileExists(at: companion) { return true }
+        guard let contents = try? csvContents(at: $0),
+          let headers = try? CSVCodec.parse(contents).first
+        else {
+          return false
+        }
+        return headers.contains("localization_state")
       }
     }.sorted { lhs, rhs in
       let lhsDate = try? lhs.resourceValues(forKeys: [.contentModificationDateKey])
@@ -260,6 +291,10 @@ final class RecordingFileStore: RecordingFileStoring {
         .contentModificationDate
       return (lhsDate ?? .distantPast) > (rhsDate ?? .distantPast)
     }
+  }
+
+  func writeCSV(_ contents: String, to url: URL) throws {
+    try contents.write(to: url, atomically: true, encoding: .utf8)
   }
 
   func csvContents(at url: URL) throws -> String {
@@ -318,16 +353,14 @@ final class RecordingFileStore: RecordingFileStoring {
     // 同じ録音のWAV・CSV・Dev CSVを一組として移行し、衝突時も同じ連番を保つ。
     let groups = Dictionary(grouping: rootFiles) { url -> String in
       let stem = url.deletingPathExtension().lastPathComponent
-      return stem.hasPrefix("Dev_") ? String(stem.dropFirst(4)) : stem
+      let prefix = companionPrefix(for: url)
+      return String(stem.dropFirst(prefix.count))
     }
 
     for (baseName, files) in groups {
       var destinationBaseName = baseName
       let hasCollision = files.contains { file in
-        let name =
-          file.lastPathComponent.hasPrefix("Dev_")
-          ? "Dev_\(destinationBaseName).\(file.pathExtension)"
-          : "\(destinationBaseName).\(file.pathExtension)"
+        let name = "\(companionPrefix(for: file))\(destinationBaseName).\(file.pathExtension)"
         return fileManager.fileExists(atPath: defaultDirectory.appendingPathComponent(name).path)
       }
 
@@ -349,7 +382,7 @@ final class RecordingFileStore: RecordingFileStoring {
       }
 
       for source in files {
-        let devPrefix = source.lastPathComponent.hasPrefix("Dev_") ? "Dev_" : ""
+        let devPrefix = companionPrefix(for: source)
         let destination = defaultDirectory.appendingPathComponent(
           "\(devPrefix)\(destinationBaseName).\(source.pathExtension)"
         )
@@ -357,6 +390,12 @@ final class RecordingFileStore: RecordingFileStoring {
         try fileManager.moveItem(at: source, to: destination)
       }
     }
+  }
+
+  private func companionPrefix(for url: URL) -> String {
+    if url.lastPathComponent.hasPrefix("Dev_") { return "Dev_" }
+    if url.lastPathComponent.hasPrefix("Localization_") { return "Localization_" }
+    return ""
   }
 
   private func recordingNameComponents(_ baseName: String) -> (prefix: String, date: String)? {
@@ -375,6 +414,10 @@ final class RecordingFileStore: RecordingFileStoring {
     var candidate = "\(baseName)_\(suffix)"
     while fileManager.fileExists(atPath: directory.appendingPathComponent("\(candidate).wav").path)
       || fileManager.fileExists(atPath: directory.appendingPathComponent("\(candidate).csv").path)
+      || fileManager.fileExists(
+        atPath: directory.appendingPathComponent("Dev_\(candidate).csv").path)
+      || fileManager.fileExists(
+        atPath: directory.appendingPathComponent("Localization_\(candidate).csv").path)
     {
       suffix += 1
       candidate = "\(baseName)_\(suffix)"
@@ -384,7 +427,7 @@ final class RecordingFileStore: RecordingFileStoring {
 
   private func destinationGroupExists(_ baseName: String, files: [URL], in directory: URL) -> Bool {
     files.contains { file in
-      let devPrefix = file.lastPathComponent.hasPrefix("Dev_") ? "Dev_" : ""
+      let devPrefix = companionPrefix(for: file)
       let destination = directory.appendingPathComponent(
         "\(devPrefix)\(baseName).\(file.pathExtension)"
       )

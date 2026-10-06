@@ -3,7 +3,8 @@ import Accelerate
 import CoreML
 import Foundation
 
-final class AudioFeatureExtractor {
+// Sample buffers are locked; FFT extraction has one owner on the serial feature queue.
+final class AudioFeatureExtractor: @unchecked Sendable {
   private let sampleRate: Double = 44100.0
   private let nFft: Int = 1024
   private let hopLength: Int = 512
@@ -23,6 +24,13 @@ final class AudioFeatureExtractor {
     bufferLock.lock()
     defer { bufferLock.unlock() }
     return bufferL.count
+  }
+
+  var isReady: Bool {
+    bufferLock.lock()
+    defer { bufferLock.unlock() }
+    return bufferL.count >= requiredSamples && bufferR.count >= requiredSamples
+      && samplesSinceLastExtraction >= stepSamples
   }
 
   // Melフィルター行列 [Melビン(64)][周波数ビン(513)]

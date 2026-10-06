@@ -5,12 +5,16 @@ struct SettingsView_Previews: PreviewProvider {
     SettingsView(
       recordingFileStore: RecordingFileStore.shared,
       audioIOController: AudioIOController(),
-      audioPreviewController: AudioPreviewController()
+      audioPreviewController: AudioPreviewController(),
+      modelSelection: AppDependencies.live.directionModelSelection,
+      versionLabel: AppDependencies.live.measurementEnvironment.versionLabel
     )
   }
 }
 
 struct SettingsView: View {
+  @Bindable private var modelSelection: DirectionModelSelectionController
+  private let versionLabel: String
   private let recordingFileStore: RecordingFileStoring
   private let audioPreviewController: AudioPreviewController
   @ObservedObject private var audioIOController: AudioIOController
@@ -24,8 +28,12 @@ struct SettingsView: View {
   init(
     recordingFileStore: RecordingFileStoring,
     audioIOController: AudioIOController,
-    audioPreviewController: AudioPreviewController
+    audioPreviewController: AudioPreviewController,
+    modelSelection: DirectionModelSelectionController,
+    versionLabel: String
   ) {
+    self.modelSelection = modelSelection
+    self.versionLabel = versionLabel
     self.recordingFileStore = recordingFileStore
     self.audioIOController = audioIOController
     self.audioPreviewController = audioPreviewController
@@ -41,11 +49,31 @@ struct SettingsView: View {
       }
       .navigationTitle("Settings")
       .navigationBarTitleDisplayMode(.inline)
+      .alert(
+        "推論モデル",
+        isPresented: Binding(
+          get: { modelSelection.message != nil },
+          set: { if !$0 { modelSelection.message = nil } }
+        )
+      ) {
+        Button("OK") { modelSelection.message = nil }
+      } message: {
+        Text(modelSelection.message ?? "")
+      }
     }
   }
 
   private var generalSettingsSection: some View {
     Section {
+      NavigationLink {
+        DirectionModelSelectionView(
+          controller: modelSelection, audioIOController: audioIOController)
+      } label: {
+        SettingsNavigationRow(
+          systemName: "brain", color: .purple, title: "推論モデル",
+          value: modelSelection.selectedModelName ?? "利用不可"
+        )
+      }
       Toggle(isOn: $isNoiseFilterEnabled) {
         SettingsRowLabel(
           systemName: "waveform.badge.minus",
@@ -129,7 +157,7 @@ struct SettingsView: View {
         Text("Version")
           .font(.system(size: 16))
         Spacer()
-        Text("4.2.0")
+        Text(versionLabel)
           .foregroundStyle(.secondary)
       }
     } header: {

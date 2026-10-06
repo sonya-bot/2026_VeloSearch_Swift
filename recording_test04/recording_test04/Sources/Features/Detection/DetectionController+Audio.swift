@@ -55,7 +55,7 @@ extension DetectionController {
     isTestSoundPlaying = false
   }
 
-  func convertBuffer(
+  nonisolated static func convertBuffer(
     _ buffer: AVAudioPCMBuffer,
     converter: AVAudioConverter,
     targetFormat: AVAudioFormat
@@ -105,9 +105,7 @@ extension DetectionController {
     { channelData[$0] }
     let rms = sqrt(channelDataValueArray.map { $0 * $0 }.reduce(0, +) / Float(buffer.frameLength))
     let avgPower = 20 * log10(rms)
-    DispatchQueue.main.async {
-      self.currentDecibel = avgPower.isNaN || avgPower.isInfinite ? -160.0 : max(avgPower, -160.0)
-    }
+    currentDecibel = avgPower.isNaN || avgPower.isInfinite ? -160.0 : max(avgPower, -160.0)
   }
 
 }

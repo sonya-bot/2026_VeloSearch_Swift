@@ -68,10 +68,16 @@ final class PlayerRecordingDetailsController {
     let csvURL = audioURL.deletingPathExtension().appendingPathExtension("csv")
     do {
       let csvString = try recordingFileStore.csvContents(at: csvURL)
-      return csvString.components(separatedBy: .newlines).dropFirst().compactMap { line in
-        let columns = line.components(separatedBy: ",")
-        guard columns.count >= 2, let time = Double(columns[0]) else { return nil }
-        return CSVRecord(time: time, speed: columns[1])
+      let records = try CSVCodec.parse(csvString)
+      guard let headers = records.first,
+        let timeIndex = headers.firstIndex(of: "elapsed_time"),
+        let speedIndex = headers.firstIndex(of: "speed_kmh")
+      else { return [] }
+      return records.dropFirst().compactMap { columns in
+        guard columns.indices.contains(timeIndex), columns.indices.contains(speedIndex),
+          let time = Double(columns[timeIndex])
+        else { return nil }
+        return CSVRecord(time: time, speed: columns[speedIndex])
       }
     } catch {
       AppLogger.storage.notice("対応する速度CSVを読み込めませんでした")
@@ -81,7 +87,11 @@ final class PlayerRecordingDetailsController {
 
   func companionCSV(for audioURL: URL) -> URL? {
     let csvURL = audioURL.deletingPathExtension().appendingPathExtension("csv")
-    return recordingFileStore.fileExists(at: csvURL) ? csvURL : nil
+    if recordingFileStore.fileExists(at: csvURL) { return csvURL }
+    let localizationURL = audioURL.deletingLastPathComponent().appendingPathComponent(
+      "Localization_\(audioURL.deletingPathExtension().lastPathComponent).csv"
+    )
+    return recordingFileStore.fileExists(at: localizationURL) ? localizationURL : nil
   }
 
   private func persist(_ details: RecordingDetails, for fileName: String) {

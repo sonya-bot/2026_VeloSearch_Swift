@@ -4,6 +4,15 @@
 
 ## General Settings
 
+### 推論モデル
+
+- キー：`selectedDirectionModelName`
+- 初期値：`20260725-010849_hybrid_Best_model_epoch59`
+- 同梱モデルをファイル名（末尾の`.mlpackage`を除く）で表示します。
+- モデル読み込み・入出力検証に成功してから選択を保存します。計測中は変更できません。
+- 開発時の配置先は`recording_test04/Resources/models/`、実行時の保存場所はアプリBundleです。
+- 追加手順は[開発・テスト](development.md#core-mlモデルの追加更新)を参照してください。
+
 ### Noise Filter
 
 - キー：`isNoiseFilterEnabled`
@@ -116,18 +125,20 @@ ONにするとDetectings画面へ次を表示します。
 
 ### Debug CSV
 
-DefaultとすべてのSceneから`Dev_`で始まるCSVを収集し、更新日時の新しい順に表示します。
-選択したCSVは横・縦方向にスクロールできる表として表示します。
+DefaultとすべてのSceneから検知の時系列CSVと旧`Dev_` CSVを収集し、更新日時順に表示します。
+対応する時系列CSVがない推論イベントCSVも一覧から開けます。既存の一覧レイアウトと導線は維持します。
+プレビュー内の「時系列／推論イベント」で同じ録音のCSVを切り替えられます。
+旧Dev CSVを開いた場合は、そのファイルを時系列側として表示し、書き換えません。
 
 ## About
 
-設定画面上の表示バージョンは`2.2.0`です。これは既存画面との互換表示であり、
-ビルド番号やInfo.plistのmarketing versionを自動参照するものではありません。
+Info.plistの実際のmarketing versionとbuild番号を表示します。推論イベントCSVにも同じ値を記録します。
 
 ## UserDefaultsキー一覧
 
 | キー | 用途 |
 | --- | --- |
+| `selectedDirectionModelName` | 選択した同梱推論モデル |
 | `isNoiseFilterEnabled` | Noise Filter |
 | `warningSoundID` | 警告音 |
 | `deviceOrientation` | 端末向き |

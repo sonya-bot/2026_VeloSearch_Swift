@@ -5,50 +5,32 @@ import Foundation
 extension DetectionController {
   func handleLocalizationAudio(buffer: AVAudioPCMBuffer, at time: Date) {
     appendPreRoll(buffer: buffer)
-
     switch localizationState {
     case .listeningForBeep:
-      guard beepDetector.detect(buffer: buffer, at: time) else { return }
-
-      featureExtractor.reset()
-      beepDetectedAt = time
-      pendingEventID = nextEventID
-      nextEventID += 1
-      pendingGroundTruth = currentGroundTruth
-      debugBeepDetectedCount += 1
-      debugBeepDetectedThisFrame = true
-      debugLastBeepElapsedTime = elapsedTime
-      debugMessage = "Beep detected"
-      setLocalizationState(.waitingAfterBeep)
-
-      if localizationDelaySeconds <= 0 {
-        debugMessage = "Collecting localization audio"
-        setLocalizationState(.collectingAudio)
-        let preRoll = currentPreRollSamples()
-        featureExtractor.append(samplesL: preRoll.left, samplesR: preRoll.right)
-        requestFeatureExtraction()
-      }
-
-    case .waitingAfterBeep:
-      guard let beepDetectedAt else {
-        setLocalizationState(.listeningForBeep)
+      guard beepDetector.detect(buffer: buffer, at: time), let sessionID = activeSessionID else {
         return
       }
-
-      guard time.timeIntervalSince(beepDetectedAt) >= localizationDelaySeconds else { return }
-
+      let detectedTime = clock.now()
       featureExtractor.reset()
+      activeEvent = LocalizationEvent(
+        sessionID: sessionID, eventID: nextEventID, modelName: sessionModelName,
+        groundTruth: currentGroundTruth, directionTag: currentDirectionTag, origin: sessionOrigin,
+        timing: LocalizationTiming(beepDetected: detectedTime)
+      )
+      nextEventID += 1
+      debugBeepDetectedCount += 1
+      debugBeepDetectedThisFrame = true
+      debugLastBeepElapsedTime = detectedTime - sessionOrigin
       debugMessage = "Collecting localization audio"
       setLocalizationState(.collectingAudio)
-      featureExtractor.append(buffer: buffer)
+      let preRoll = currentPreRollSamples()
+      featureExtractor.append(samplesL: preRoll.left, samplesR: preRoll.right)
       requestFeatureExtraction()
-
     case .collectingAudio:
       featureExtractor.append(buffer: buffer)
       requestFeatureExtraction()
-
     case .predicting:
-      return
+      break
     }
   }
 
@@ -58,62 +40,91 @@ extension DetectionController {
   }
 
   func requestFeatureExtraction() {
-    guard startFeatureExtractionIfIdle() else {
-      DispatchQueue.main.async {
-        self.debugFeatureSkipCount += 1
-        self.debugMessage = "Feature extraction skipped: previous extraction is still running"
-      }
+    debugBufferCount = featureExtractor.currentBufferCount
+    guard featureExtractor.isReady, var event = activeEvent, let predictor = sessionPredictor else {
       return
     }
-
+    event.timing.audioReady = clock.now()
+    activeEvent = event
+    setLocalizationState(.predicting)
+    let extractor = featureExtractor
+    let measurementClock = clock
+    // Each work item owns its event and extractor; a new recording never reuses them.
     featureExtractionQueue.async { [weak self] in
-      guard let self = self else { return }
-      defer {
-        self.finishFeatureExtraction()
+      var completedEvent = event
+      completedEvent.timing.featureStarted = measurementClock.now()
+      let features = extractor.extractIfReady()
+      completedEvent.timing.featureCompleted = measurementClock.now()
+      if let features {
+        let inference = predictor.infer(features: features, clock: measurementClock)
+        completedEvent.prediction = inference.prediction
+        completedEvent.timing.predictionStarted = inference.started
+        completedEvent.timing.predictionCompleted = inference.completed
+        if inference.prediction == nil {
+          completedEvent.outcome = "failure"
+          completedEvent.failureKind = inference.failureKind
+        }
+      } else {
+        completedEvent.outcome = "failure"
+        completedEvent.failureKind = "feature_extraction_failed"
       }
-
-      let features = self.featureExtractor.extractIfReady()
-      let currentBufferCount = self.featureExtractor.currentBufferCount
-
-      DispatchQueue.main.async {
-        self.debugBufferCount = currentBufferCount
-        self.debugFeatureCreated = features != nil
+      let result = completedEvent
+      Task { @MainActor [weak self] in
+        self?.applyLocalizationResult(result)
       }
-
-      guard let features else { return }
-      self.setLocalizationState(.predicting)
-      self.executeAI(features: features)
     }
   }
 
-  func startFeatureExtractionIfIdle() -> Bool {
-    featureExtractionLock.lock()
-    defer { featureExtractionLock.unlock() }
-
-    if isExtractingFeatures {
-      return false
+  func applyLocalizationResult(_ result: LocalizationEvent) {
+    guard isRecording, activeSessionID == result.sessionID,
+      activeEvent?.eventID == result.eventID
+    else { return }
+    var event = result
+    debugFeatureCreated =
+      event.timing.featureCompleted != nil && event.failureKind != "feature_extraction_failed"
+    debugPredictExecuted = event.timing.predictionStarted != nil
+    debugPredictSuccess = event.prediction != nil
+    if let prediction = event.prediction {
+      currentAIAngle = prediction.angle
+      currentAIProbability = prediction.maxProbability * 100
+      currentDirectionProbabilities = prediction.probabilities
+      let isAccepted = prediction.maxProbability >= modelSelection.detectionThreshold
+      state = isAccepted ? .detect : .uncertain
+      if isAccepted && isWarningArmed {
+        warningTriggerID += 1
+        isWarningArmed = false
+        event.warningTriggered = true
+      } else if !isAccepted {
+        isWarningArmed = true
+      }
+    } else {
+      currentAIAngle = nil
+      currentAIProbability = 0
+      currentDirectionProbabilities = Array(repeating: 0, count: 8)
+      state = .uncertain
+      debugMessage = "Localization failed"
     }
-
-    isExtractingFeatures = true
-    return true
-  }
-
-  func finishFeatureExtraction() {
-    featureExtractionLock.lock()
-    isExtractingFeatures = false
-    featureExtractionLock.unlock()
+    // Capture UI state completion before any CSV formatting or feature cleanup.
+    let updatedTime = clock.now()
+    event.timing.uiUpdated = updatedTime
+    debugBeepToPredictionMs = (updatedTime - event.timing.beepDetected) * 1000
+    if let previousTime = lastPredictionSuccessTime, event.prediction != nil {
+      debugLastUpdateMs = (updatedTime - previousTime) * 1000
+    }
+    if event.prediction != nil { lastPredictionSuccessTime = updatedTime }
+    activeEvent = nil
+    setLocalizationState(.listeningForBeep)
+    scheduleResultClear()
+    appendLocalizationEvent(event)
+    featureExtractor.reset()
   }
 
   func appendPreRoll(buffer: AVAudioPCMBuffer) {
     guard let channelData = buffer.floatChannelData else { return }
-
     let frameLength = Int(buffer.frameLength)
-    let ptrL = channelData[0]
-    let ptrR = buffer.format.channelCount > 1 ? channelData[1] : channelData[0]
-
-    preRollL.append(contentsOf: UnsafeBufferPointer(start: ptrL, count: frameLength))
-    preRollR.append(contentsOf: UnsafeBufferPointer(start: ptrR, count: frameLength))
-
+    preRollL.append(contentsOf: UnsafeBufferPointer(start: channelData[0], count: frameLength))
+    let rightChannel = buffer.format.channelCount > 1 ? channelData[1] : channelData[0]
+    preRollR.append(contentsOf: UnsafeBufferPointer(start: rightChannel, count: frameLength))
     if preRollL.count > preRollSamples {
       let removeCount = preRollL.count - preRollSamples
       preRollL.removeFirst(removeCount)
@@ -123,12 +134,7 @@ extension DetectionController {
 
   func currentPreRollSamples() -> (left: [Float], right: [Float]) {
     let count = min(preRollL.count, preRollR.count)
-    guard count > 0 else { return ([], []) }
-
-    return (
-      Array(preRollL.suffix(count)),
-      Array(preRollR.suffix(count))
-    )
+    return (Array(preRollL.suffix(count)), Array(preRollR.suffix(count)))
   }
 
   func resetPreRollBuffer() {
@@ -136,129 +142,18 @@ extension DetectionController {
     preRollR.removeAll(keepingCapacity: true)
   }
 
-  func executeAI(features: MLMultiArray) {
-    guard startPredictionIfIdle() else {
-      Task { @MainActor in
-        self.debugPredictionSkipCount += 1
-        self.debugPredictExecuted = false
-        self.debugMessage = "Prediction skipped: previous inference is still running"
-      }
-      return
-    }
-
-    Task { @MainActor in
-      self.debugPredictExecuted = true
-    }
-    Task.detached { [weak self] in
-      guard let self = self else { return }
-      defer {
-        self.finishPrediction()
-      }
-
-      if let result = self.mlManager.predict(features: features) {
-        Task { @MainActor in
-          guard self.isRecording else { return }
-
-          let now = Date()
-          let predictionCompletedTime = self.elapsedTime
-          let beepDetectedTime = self.debugLastBeepElapsedTime
-          if let lastPredictionSuccessTime = self.lastPredictionSuccessTime {
-            self.debugLastUpdateMs = now.timeIntervalSince(lastPredictionSuccessTime) * 1000.0
-          }
-          self.lastPredictionSuccessTime = now
-          self.debugPredictSuccess = true
-          if let beepDetectedAt = self.beepDetectedAt {
-            self.debugBeepToPredictionMs = now.timeIntervalSince(beepDetectedAt) * 1000.0
-          }
-
-          self.currentAIAngle = result.angle
-          self.currentAIProbability = result.maxProbability * 100.0
-          self.currentDirectionProbabilities = result.probabilities
-
-          let accepted = result.maxProbability >= self.mlManager.detectionThreshold
-          var warningTriggered = false
-          if accepted {
-            self.state = .detect
-            if self.isWarningArmed {
-              self.warningTriggerID += 1
-              self.isWarningArmed = false
-              warningTriggered = true
-            }
-          } else {
-            self.state = .uncertain
-            self.isWarningArmed = true
-          }
-
-          self.appendLocalizationEvent(
-            eventID: self.pendingEventID,
-            groundTruth: self.pendingGroundTruth,
-            predictedAngle: result.angle,
-            maxProbability: result.maxProbability,
-            probabilities: result.probabilities,
-            accepted: accepted,
-            beepDetectedTime: beepDetectedTime,
-            predictionCompletedTime: predictionCompletedTime,
-            beepToPredictionMs: self.debugBeepToPredictionMs,
-            warningTriggered: warningTriggered,
-            predictionSuccess: true
-          )
-          self.scheduleResultClear()
-          self.featureExtractor.reset()
-          self.beepDetectedAt = nil
-          self.pendingEventID = nil
-          self.setLocalizationState(.listeningForBeep)
-        }
-      } else {
-        Task { @MainActor in
-          guard self.isRecording else { return }
-          self.debugPredictSuccess = false
-          self.appendLocalizationEvent(
-            eventID: self.pendingEventID,
-            groundTruth: self.pendingGroundTruth,
-            predictedAngle: nil,
-            maxProbability: nil,
-            probabilities: nil,
-            accepted: false,
-            beepDetectedTime: self.debugLastBeepElapsedTime,
-            predictionCompletedTime: self.elapsedTime,
-            beepToPredictionMs: self.beepDetectedAt.map {
-              Date().timeIntervalSince($0) * 1000.0
-            } ?? 0.0,
-            warningTriggered: false,
-            predictionSuccess: false
-          )
-          self.featureExtractor.reset()
-          self.beepDetectedAt = nil
-          self.pendingEventID = nil
-          self.setLocalizationState(.listeningForBeep)
-        }
-      }
-    }
-  }
-
-  func startPredictionIfIdle() -> Bool {
-    predictionLock.lock()
-    defer { predictionLock.unlock() }
-
-    if isPredicting {
-      return false
-    }
-
-    isPredicting = true
-    return true
-  }
-
-  func finishPrediction() {
-    predictionLock.lock()
-    isPredicting = false
-    predictionLock.unlock()
-  }
-
   func scheduleResultClear() {
     resultClearTask?.cancel()
     resultClearTask = Task { @MainActor [weak self] in
       let nanoseconds = UInt64((self?.resultDisplaySeconds ?? 3.0) * 1_000_000_000)
-      try? await Task.sleep(nanoseconds: nanoseconds)
+      do {
+        try await Task.sleep(nanoseconds: nanoseconds)
+      } catch is CancellationError {
+        return
+      } catch {
+        AppLogger.detection.error("結果表示タイマーに失敗しました: \(error.localizedDescription)")
+        return
+      }
       guard !Task.isCancelled, let self else { return }
 
       self.currentAIAngle = nil

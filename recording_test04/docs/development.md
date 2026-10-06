@@ -48,10 +48,13 @@ xcodebuild \
 - Defaultフォルダの作成
 - 日付と連番による録音URL生成
 - 選択中Sceneの名称変更
-- WAV削除時の通常CSV／Dev CSV連動削除
-- WAV改名時の通常CSV／Dev CSV連動改名
+- WAV削除時の時系列／Localization／旧Dev CSV連動削除
+- WAV改名時の関連CSV連動改名と衝突時の整合性
 - 共有形式ごとの対象ファイル分類
-- Dev CSVの更新日時順ソート
+- 診断CSVの取得と更新日時順ソート
+- モデル名・選択の永続化、検証失敗時の復帰、計測中の変更禁止
+- 5区間の時間、UI更新とCSV処理の順序、古い推論結果の除外
+- CSVの引用符・改行、両CSVのプレビュー切り替え、旧CSV互換性
 - 通常ファイル、ディレクトリ、存在しないパスの存在判定
 - AppRootViewModelによるモニタリング設定反映
 - Audio I/O設定の保存、旧出力設定の移行、出力ポート種別の識別
@@ -108,13 +111,32 @@ Swiftファイルは原則として1行120文字以内に保ちます。
 3. Tuistプロジェクトを再生成します。
 4. Preview再生、Monitorings録音、自動停止を実機で確認します。
 
-## Core MLモデルの更新
+## Core MLモデルの追加・更新
 
-1. `.mlpackage`を`recording_test04/Resources/models`へ配置します。
-2. `DirectionModelService`のモデル型と`modelName`を更新します。
-3. 入力テンソル形状が`AudioFeatureExtractor`の出力と一致することを確認します。
-4. 出力が8方向の確率であること、値が有限かつ0以上であることを確認します。
-5. 実音声で角度、閾値、CSV出力、処理時間を検証します。
+開発時の配置先は、リポジトリルートから`recording_test04/Resources/models/`です。
+
+```text
+recording_test04/Resources/models/
+├── 20260725-010849_hybrid_Best_model_epoch59.mlpackage
+└── RC_CNN.mlpackage  # 実ファイルを用意した場合の追加例
+```
+
+1. `.mlpackage`を上記ディレクトリ直下へ配置します。ファイル名は一意にします。
+2. 学習側の前処理が44.1 kHz、ステレオ、約2秒、5特徴量の順序と一致することを確認します。
+3. 単一MultiArray入力の形状が`[1,5,64,173]`、出力は単一MultiArrayの8要素で、
+   0°、45°、90°、135°、180°、225°、270°、315°の順序であることを確認します。
+   入力はFloat16／Float32／Doubleへ対応し、必要な型変換はServiceが行います。
+   サンプルレート・特徴量の意味・方向の順序はテンソル形状からは検証できないため、学習側で確認してください。
+4. Tuistプロジェクトを再生成し、ビルドします。Xcodeが`.mlmodelc`へコンパイルしてBundleへ同梱します。
+5. Settingsの「推論モデル」で選択し、実音声で角度、確率、時間、CSVを確認します。
+
+モデル一覧はBundle内の`.mlmodelc`から取得するため、Swiftのモデル型名を編集する必要はありません。
+表示・CSVのモデル名は末尾の拡張子を除いた名前です。`RC_CNN.v2.mlpackage`は`RC_CNN.v2`となります。
+改名は別モデル名として扱い、保存済みの選択名が見つからなければ現行モデルへ復帰して通知します。
+現在同梱しているのは現行モデル1種類です。追加モデルの実ファイルは別途用意してください。
+
+Xcode 27で既存Firebase依存のiOS 12 deployment targetが拒否される場合、検証コマンドに
+`IPHONEOS_DEPLOYMENT_TARGET=18.0`を加えてください。依存の生成済みプロジェクトは直接編集しません。
 
 ## アプリアイコンの更新
 

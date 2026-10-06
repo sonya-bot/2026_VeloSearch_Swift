@@ -59,7 +59,9 @@ struct RecordingFileStoreTests {
     let audioURL = context.store.defaultDirectory.appendingPathComponent("\(baseName).wav")
     let csvURL = context.store.defaultDirectory.appendingPathComponent("\(baseName).csv")
     let devCSVURL = context.store.defaultDirectory.appendingPathComponent("Dev_\(baseName).csv")
-    for fileURL in [audioURL, csvURL, devCSVURL] {
+    let eventURL = context.store.defaultDirectory.appendingPathComponent(
+      "Localization_\(audioURL.deletingPathExtension().lastPathComponent).csv")
+    for fileURL in [audioURL, csvURL, devCSVURL, eventURL] {
       try Data().write(to: fileURL)
     }
 
@@ -68,6 +70,7 @@ struct RecordingFileStoreTests {
     #expect(!context.fileManager.fileExists(atPath: audioURL.path))
     #expect(!context.fileManager.fileExists(atPath: csvURL.path))
     #expect(!context.fileManager.fileExists(atPath: devCSVURL.path))
+    #expect(!context.fileManager.fileExists(atPath: eventURL.path))
   }
 
   @Test
@@ -79,7 +82,9 @@ struct RecordingFileStoreTests {
     let audioURL = context.store.defaultDirectory.appendingPathComponent("\(oldBaseName).wav")
     let csvURL = context.store.defaultDirectory.appendingPathComponent("\(oldBaseName).csv")
     let devCSVURL = context.store.defaultDirectory.appendingPathComponent("Dev_\(oldBaseName).csv")
-    for fileURL in [audioURL, csvURL, devCSVURL] {
+    let eventURL = context.store.defaultDirectory.appendingPathComponent(
+      "Localization_\(audioURL.deletingPathExtension().lastPathComponent).csv")
+    for fileURL in [audioURL, csvURL, devCSVURL, eventURL] {
       try Data().write(to: fileURL)
     }
 
@@ -98,6 +103,26 @@ struct RecordingFileStoreTests {
       )
     )
     #expect(!context.fileManager.fileExists(atPath: audioURL.path))
+    #expect(
+      context.fileManager.fileExists(
+        atPath: context.store.defaultDirectory.appendingPathComponent(
+          "Localization_\(newBaseName).csv"
+        ).path))
+  }
+
+  @Test
+  func diagnosticListIncludesTimeSeriesAndLegacyFilesButNotEvents() throws {
+    let context = try makeTestContext()
+    try context.store.prepareStorage()
+    for name in [
+      "Detecting_test.csv", "Dev_test.csv", "Localization_Detecting_test.csv", "Analyze_test.csv",
+    ] {
+      try Data().write(to: context.store.defaultDirectory.appendingPathComponent(name))
+    }
+    #expect(
+      Set(context.store.diagnosticCSVFiles().map(\.lastPathComponent)) == [
+        "Detecting_test.csv", "Dev_test.csv",
+      ])
   }
 
   @Test
@@ -148,7 +173,7 @@ struct RecordingFileStoreTests {
       ofItemAtPath: newerURL.path
     )
 
-    let files = context.store.allDevCSVFiles()
+    let files = context.store.diagnosticCSVFiles()
 
     #expect(files.map(\.lastPathComponent) == ["Dev_Newer.csv", "Dev_Older.csv"])
   }
@@ -167,6 +192,54 @@ struct RecordingFileStoreTests {
         at: context.store.defaultDirectory.appendingPathComponent("Missing.csv")
       )
     )
+  }
+
+  @Test
+  func renameCollisionLeavesEntireRecordingGroupUnchanged() throws {
+    let context = try makeTestContext()
+    try context.store.prepareStorage()
+    let directory = context.store.defaultDirectory
+    for name in ["Old.wav", "Old.csv", "Localization_Old.csv", "Localization_New.csv"] {
+      try Data().write(to: directory.appendingPathComponent(name))
+    }
+    #expect(throws: RecordingFileStoreError.self) {
+      try context.store.renameRecording(at: directory.appendingPathComponent("Old.wav"), to: "New")
+    }
+    #expect(context.store.fileExists(at: directory.appendingPathComponent("Old.wav")))
+    #expect(context.store.fileExists(at: directory.appendingPathComponent("Old.csv")))
+    #expect(context.store.fileExists(at: directory.appendingPathComponent("Localization_Old.csv")))
+    #expect(!context.store.fileExists(at: directory.appendingPathComponent("New.wav")))
+  }
+
+  @Test
+  func rootMigrationPreservesLocalizationCompanionOnCollision() throws {
+    let context = try makeTestContext()
+    try context.store.prepareStorage()
+    let names = [
+      "Detecting_20260821_01.wav", "Detecting_20260821_01.csv",
+      "Localization_Detecting_20260821_01.csv",
+    ]
+    for name in names {
+      try Data().write(to: context.store.documentsDirectory.appendingPathComponent(name))
+      try Data().write(to: context.store.defaultDirectory.appendingPathComponent(name))
+    }
+    try context.store.prepareStorage()
+    for name in [
+      "Detecting_20260821_02.wav", "Detecting_20260821_02.csv",
+      "Localization_Detecting_20260821_02.csv",
+    ] {
+      #expect(
+        context.store.fileExists(at: context.store.defaultDirectory.appendingPathComponent(name)))
+    }
+  }
+
+  @Test
+  func diagnosticListIncludesOrphanLocalizationCSV() throws {
+    let context = try makeTestContext()
+    try context.store.prepareStorage()
+    let eventURL = context.store.defaultDirectory.appendingPathComponent("Localization_Orphan.csv")
+    try context.store.writeCSV("event_id\n1", to: eventURL)
+    #expect(context.store.diagnosticCSVFiles() == [eventURL])
   }
 
   private func makeTestContext() throws -> TestContext {
