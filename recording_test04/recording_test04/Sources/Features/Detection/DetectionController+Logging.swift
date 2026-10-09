@@ -21,12 +21,13 @@ extension DetectionController {
           .description,
       ] + probabilities + [
         CSVCodec.decimal(event.timing.beepDetected - event.origin), completedTime,
-        event.timing.durationFields[4], event.warningTriggered.description,
+        event.timing.beepToPredictionMilliseconds.map { CSVCodec.decimal($0) } ?? "",
+        event.warningTriggered.description,
         (prediction != nil).description,
       ] + event.timing.durationFields + event.timing.boundaryFields(relativeTo: event.origin) + [
         environment.deviceModel, environment.osVersion, environment.appVersion,
         environment.buildNumber,
-        CSVCodec.decimal(Double(modelSelection.detectionThreshold)), "2", event.outcome,
+        CSVCodec.decimal(Double(modelSelection.detectionThreshold)), "3", event.outcome,
         event.failureKind,
       ]
     eventcsvData.append(CSVCodec.row(fields))
@@ -43,7 +44,8 @@ extension DetectionController {
       CSVCodec.decimal(debugLastUpdateMs), String(debugFeatureSkipCount),
       String(debugPredictionSkipCount),
       String(debugBeepDetectedCount), debugBeepDetectedThisFrame.description,
-      CSVCodec.decimal(debugLastBeepElapsedTime), CSVCodec.decimal(debugBeepToPredictionMs),
+      CSVCodec.decimal(debugLastBeepElapsedTime),
+      debugBeepToPredictionMs.map { CSVCodec.decimal($0) } ?? "",
       debugLocalizationState, String(debugBufferCount), debugFeatureCreated.description,
       debugPredictExecuted.description, debugPredictSuccess.description, debugMessage,
     ]

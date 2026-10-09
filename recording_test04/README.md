@@ -130,7 +130,7 @@ Documents/
 
 DetectingのCSVは時系列（通常＋診断）と推論イベントの2種類です。推論イベントには5区間の時間と実験条件を記録します。
 CSVプレビュー内で同じ録音の両CSVを切り替えられ、旧CSVも書き換えず閲覧できます。
-同梱モデルはCNN_CNN／CNN_RC／RC_CNN／RC_RCで、初期選択はCNN_CNNです。
+同梱モデルはCNN_CNN／CNN_RC／RC_CNN／RC_RC／RC_SINGLEで、初期選択はCNN_CNNです。
 モデルの配置先は`recording_test04/Resources/models/`です。追加方法は[開発・テスト](docs/development.md)を参照してください。
 
 ファイル名、CSV列、削除・共有範囲については

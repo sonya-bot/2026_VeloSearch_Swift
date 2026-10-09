@@ -70,7 +70,9 @@ struct DirectionModelSelectionTests {
     let repository = MemoryModelSelectionRepository()
     repository.selectedModelName = DirectionModelSelectionController.legacyModelName
     let controller = DirectionModelSelectionController(
-      loader: TestDirectionModelLoader(names: ["CNN_CNN", "CNN_RC", "RC_CNN", "RC_RC"]),
+      loader: TestDirectionModelLoader(names: [
+        "CNN_CNN", "CNN_RC", "RC_CNN", "RC_RC", "RC_SINGLE",
+      ]),
       repository: repository
     )
     await controller.prepareSelection()
@@ -92,12 +94,12 @@ struct DirectionModelSelectionTests {
   }
 
   @Test
-  func bundleContainsExactlyFourComparisonModels() {
+  func bundleContainsExactlyFiveComparisonModels() {
     let loader = DirectionModelLoadingService(bundle: .main)
-    #expect(loader.resources.map(\.id) == ["CNN_CNN", "CNN_RC", "RC_CNN", "RC_RC"])
+    #expect(loader.resources.map(\.id) == ["CNN_CNN", "CNN_RC", "RC_CNN", "RC_RC", "RC_SINGLE"])
   }
 
-  @Test(arguments: ["CNN_CNN", "CNN_RC", "RC_CNN", "RC_RC"])
+  @Test(arguments: ["CNN_CNN", "CNN_RC", "RC_CNN", "RC_RC", "RC_SINGLE"])
   func bundledComparisonModelHasCompatibleInterface(modelName: String) async throws {
     let loader = DirectionModelLoadingService(bundle: .main)
     let resource = try #require(loader.resources.first { $0.id == modelName })

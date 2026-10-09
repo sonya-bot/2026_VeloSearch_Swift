@@ -130,7 +130,7 @@ final class DetectionController {
   var debugBeepDetectedThisFrame: Bool = false
   var debugLocalizationState: String = LocalizationState.listeningForBeep.rawValue
   var debugLastBeepElapsedTime: Double = 0.0
-  var debugBeepToPredictionMs: Double = 0.0
+  var debugBeepToPredictionMs: Double?
 
   var timer: Timer?
   var sessionLocationService: LocationService?

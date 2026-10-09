@@ -84,7 +84,7 @@ Core MLへ渡すテンソル形状は`[1, 5, 64, 173]`です。
 ## Core ML推論
 
 - 初期モデル：`CNN_CNN`
-- 同梱モデル：`CNN_CNN`、`CNN_RC`、`RC_CNN`、`RC_RC`
+- 同梱モデル：`CNN_CNN`、`CNN_RC`、`RC_CNN`、`RC_RC`、`RC_SINGLE`
 - Settingsの「推論モデル」で同梱モデルを選択します。モデル名は元のファイル名から末尾の
   `.mlpackage`だけを除いた名前です。`RC_CNN.mlpackage`は`RC_CNN`、`RC_CNN.v2.mlpackage`は
   `RC_CNN.v2`として表示・記録します。
@@ -136,7 +136,7 @@ Localization_Detecting_yyyyMMdd_NN.csv
 
 `Localization_<basename>.csv`へ推論イベントごとに1行を保存します。
 モデル名、正解方向、推論角度、最大確率、判定、8方向の全確率、警告要求の有無と、
-以下の性能・実験条件を記録します。CSV形式バージョンは`2`です。
+以下の性能・実験条件を記録します。CSV形式バージョンは`3`です。
 
 | 時間列 | 計測区間 |
 | --- | --- |
@@ -149,8 +149,10 @@ Localization_Detecting_yyyyMMdd_NN.csv
 時間は単調時計で計測し、ミリ秒・小数点以下3桁で保存します。
 `beep_detected_time`、`audio_ready_time`、`feature_started_time`、`feature_completed_time`、
 `prediction_started_time`、`inference_completed_time`、`ui_updated_time`は計測開始からの秒数です。
-既存の`prediction_completed_time`もCore ML呼び出し終了時刻、`beep_to_prediction_ms`は従来同様に
-UI反映までの全体時間を記録します。`elapsed_time`はUI更新時、または中止時の経過秒数です。
+既存の`prediction_completed_time`もCore ML呼び出し終了時刻です。`beep_to_prediction_ms`は
+時系列・推論イベントの両CSVでビープ検出からCore ML呼び出し終了までの時間を記録します。
+推論終了時刻が未取得なら空欄です。形式バージョン`2`ではUI反映までの全体時間を記録していました。
+既存CSVは書き換えません。`elapsed_time`はUI更新時、または中止時の経過秒数です。
 実際の描画完了・音の鳴り始めは計測していません。
 
 `device_model`、`os_version`、`app_version`、`build_number`、`detection_threshold`を各イベントへ記録します。

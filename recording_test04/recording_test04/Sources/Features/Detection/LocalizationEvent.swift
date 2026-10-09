@@ -9,6 +9,10 @@ struct LocalizationTiming {
   var predictionCompleted: TimeInterval?
   var uiUpdated: TimeInterval?
 
+  var beepToPredictionMilliseconds: Double? {
+    predictionCompleted.map { max(0, $0 - beepDetected) * 1000 }
+  }
+
   private func milliseconds(from start: TimeInterval?, to end: TimeInterval?) -> String {
     guard let start, let end else { return "" }
     return CSVCodec.decimal(max(0, end - start) * 1000)

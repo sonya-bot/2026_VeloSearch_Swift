@@ -107,7 +107,7 @@ extension DetectionController {
     // Capture UI state completion before any CSV formatting or feature cleanup.
     let updatedTime = clock.now()
     event.timing.uiUpdated = updatedTime
-    debugBeepToPredictionMs = (updatedTime - event.timing.beepDetected) * 1000
+    debugBeepToPredictionMs = event.timing.beepToPredictionMilliseconds
     if let previousTime = lastPredictionSuccessTime, event.prediction != nil {
       debugLastUpdateMs = (updatedTime - previousTime) * 1000
     }
@@ -178,7 +178,7 @@ extension DetectionController {
     debugBeepDetectedThisFrame = false
     debugLocalizationState = LocalizationState.listeningForBeep.rawValue
     debugLastBeepElapsedTime = 0.0
-    debugBeepToPredictionMs = 0.0
+    debugBeepToPredictionMs = nil
     lastPredictionSuccessTime = nil
   }
 
